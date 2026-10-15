@@ -1,0 +1,83 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: handscript
+      POSTGRES_PASSWORD: handscript
+      POSTGRES_DB: handscript
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U handscript"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: handscript
+      MINIO_ROOT_PASSWORD: handscriptsecret
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio:/data
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: postgresql+psycopg://handscript:handscript@postgres:5432/handscript
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: handscript
+      S3_ACCESS_KEY: handscript
+      S3_SECRET_KEY: handscriptsecret
+      EMBEDDED_WORKER: "false"
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build: ./api
+    command: python -m app.worker
+    environment:
+      DATABASE_URL: postgresql+psycopg://handscript:handscript@postgres:5432/handscript
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: handscript
+      S3_ACCESS_KEY: handscript
+      S3_SECRET_KEY: handscriptsecret
+      EMBEDDED_WORKER: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+
+  web:
+    build:
+      context: ./web
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  minio:

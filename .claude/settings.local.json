@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import PySide6; print\\('PySide6', PySide6.__version__\\)\")",
+      "Bash(python -c \"import ui.components; import services.registry; import data.mock_data; import models.domain; from services.registry import build_services; s=build_services\\(\\); print\\('imports ok; profiles=', len\\(s.handwriting.list_profiles\\(\\)\\), 'templates=', len\\(s.templates.list_templates\\(\\)\\), 'docs=', len\\(s.documents.list_documents\\(\\)\\)\\)\")",
+      "Bash(QT_QPA_PLATFORM=offscreen python _smoke.py)",
+      "Bash(QT_QPA_PLATFORM=offscreen python _shots.py)",
+      "Bash(QT_QPA_PLATFORM=offscreen python -c ' *)",
+      "Bash(python -m compileall -q app.py ui services models data)",
+      "Bash(python app.py)",
+      "Bash(python _verify_run.py)",
+      "Bash(echo \"exit=$?\")",
+      "PowerShell(Start-Process -FilePath \"python\" -ArgumentList \"app.py\" -WorkingDirectory \"D:\\\\Fiverr\\\\HandScript-Studio\"; Start-Sleep -Seconds 2; $p = Get-Process python -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -ne \"\" }; if \\($p\\) { \"Launched. Window title\\(s\\): \" + \\($p.MainWindowTitle -join ', '\\) } else { \"Process started \\(detached\\); window handle not yet reported in this session.\" })",
+      "Bash(python -c ' *)",
+      "Bash(python _shot2.py)"
+    ]
+  }
+}
