@@ -142,13 +142,13 @@ export default function BatchWizardPage() {
         {step === 3 ? (
           <div className="stack">
             <h2>Output</h2>
-            <div className="field"><label>Batch name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
+            <div className="field"><label htmlFor="batch-name">Batch name</label><input id="batch-name" type="text" value={name} placeholder="Name this batch" autoComplete="off" onChange={(event) => setName(event.target.value)} /></div>
             <div className="field"><label>Format</label>
               <select value={format} onChange={(event) => setFormat(event.target.value)}>
                 <option>PDF</option><option>PNG</option><option>Combined PDF</option>
               </select>
             </div>
-            <div className="field"><label>File naming</label><input value={naming} onChange={(event) => setNaming(event.target.value)} /></div>
+            <div className="field"><label htmlFor="file-naming">File naming</label><input id="file-naming" type="text" value={naming} autoComplete="off" onChange={(event) => setNaming(event.target.value)} /></div>
             <label className="check"><input type="checkbox" checked={individual} onChange={(event) => setIndividual(event.target.checked)} /> Individual files</label>
             <label className="check"><input type="checkbox" checked={combined} onChange={(event) => setCombined(event.target.checked)} /> Combined PDF</label>
           </div>
@@ -156,6 +156,7 @@ export default function BatchWizardPage() {
         {step === 4 ? (
           <div className="stack">
             <h2>Review</h2>
+            <div className="setting-row"><span>Batch name</span><strong>{name || imported?.filename || "Untitled batch"}</strong></div>
             <div className="setting-row"><span>Template</span><strong>{template?.name}</strong></div>
             <div className="setting-row"><span>Profile</span><strong>{profile?.name}</strong></div>
             <div className="setting-row"><span>Records</span><strong>{imported?.valid_records} valid / {imported?.records_detected} total</strong></div>

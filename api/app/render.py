@@ -53,6 +53,11 @@ def render_page(
     font_path: str | None = None,
     font_family: str | None = None,
     sample_keys: list[str] | None = None,
+    glyph_profile_id: str | None = None,
+    word_size_px: float = 70,
+    word_spacing_px: float = 15,
+    char_spacing_px: float = -2.5,
+    ink_color: str | None = None,
 ) -> Image.Image:
     width = max(1, int(round(float(template["width_in"]) * dpi)))
     height = max(1, int(round(float(template["height_in"]) * dpi)))
@@ -75,6 +80,17 @@ def render_page(
             except Exception:
                 continue
         sample_ctx = use_samples(blobs)
+    elif engine_norm == "drawn":
+        from app.handwriting.glyph_engine import load_glyph_job, use_glyphs
+
+        job = load_glyph_job(
+            glyph_profile_id or "",
+            word_size_px=word_size_px,
+            word_spacing_px=word_spacing_px,
+            char_spacing_px=char_spacing_px,
+            ink_color=ink_color,
+        )
+        sample_ctx = use_glyphs(job)
     with sample_ctx:
         _draw_elements(page, writer, elements, record, dpi=dpi, seed=seed, width=width, height=height, style_id=style_id, bias=bias, variation=variation)
     return page

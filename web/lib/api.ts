@@ -5,6 +5,8 @@ import type {
   DocumentItem,
   ExportRecord,
   ImportSummary,
+  GlyphInventory,
+  GlyphSetName,
   HandwritingEngineName,
   HandwritingStatus,
   PillowFace,
@@ -53,6 +55,36 @@ export const api = {
     const body = new FormData();
     body.set("file", file);
     return request<Profile>(`/api/profiles/${id}/samples`, { method: "POST", body });
+  },
+  glyphs: (id: string) => request<GlyphInventory>(`/api/profiles/${id}/glyphs`),
+  saveGlyph: (id: string, setName: GlyphSetName, key: string, file: Blob, metrics: {
+    baselineY: number; padWidth: number; padHeight: number; cropLeft: number; cropTop: number;
+  }) => {
+    const body = new FormData();
+    body.set("file", file, `${key}.png`);
+    body.set("baseline_y", String(metrics.baselineY));
+    body.set("pad_width", String(metrics.padWidth));
+    body.set("pad_height", String(metrics.padHeight));
+    body.set("crop_left", String(metrics.cropLeft));
+    body.set("crop_top", String(metrics.cropTop));
+    return request<GlyphInventory>(`/api/profiles/${id}/glyphs/${setName}/${encodeURIComponent(key)}`, { method: "PUT", body });
+  },
+  deleteGlyph: (id: string, setName: GlyphSetName, key: string) =>
+    request<GlyphInventory>(`/api/profiles/${id}/glyphs/${setName}/${encodeURIComponent(key)}`, { method: "DELETE" }),
+  restoreGlyphs: (id: string) => request<GlyphInventory>(`/api/profiles/${id}/glyphs/restore-sample`, { method: "POST" }),
+  clearGlyphs: (id: string) => request<GlyphInventory>(`/api/profiles/${id}/glyphs`, { method: "DELETE" }),
+  previewDrawing: async (id: string, text: string) => {
+    const response = await fetch(`${API_URL}/api/profiles/${id}/preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const detail = await response.text();
+      throw new Error(detail || "Preview failed");
+    }
+    return response.blob();
   },
 
   templates: () => request<Template[]>("/api/templates"),
@@ -110,4 +142,8 @@ export function downloadExport(id: string) {
 
 export function previewUrl(documentId: string) {
   return `${API_URL}/api/documents/${documentId}/preview`;
+}
+
+export function glyphImageUrl(id: string, setName: GlyphSetName, key: string, stamp: number) {
+  return `${API_URL}/api/profiles/${id}/glyphs/${setName}/${encodeURIComponent(key)}?v=${stamp}`;
 }

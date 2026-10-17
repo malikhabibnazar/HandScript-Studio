@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.models import Activity, AppSetting, BatchJob, ExportRecord, Profile, Template, utcnow
 from app.config import get_settings
 from app.render import parse_dpi, render_combined_pdf, render_pdf, render_png, stable_seed
+from app.schemas import export_filename
 from app.seed import DEFAULT_SETTINGS
 from app.storage import get_storage
 
@@ -57,8 +58,15 @@ def profile_ink(profile: Profile | None) -> dict:
         "variation": float(raw.get("variation", 0.15)),
     }
     engine = str(raw.get("engine") or "").strip().lower()
-    if engine in {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm"}:
+    if engine in {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm", "drawn"}:
         ink["engine"] = engine
+    if engine == "drawn" and profile is not None:
+        ink["glyph_profile_id"] = profile.id
+        ink["word_size_px"] = float(raw.get("word_size_px", 70))
+        ink["word_spacing_px"] = float(raw.get("word_spacing_px", 15))
+        ink["char_spacing_px"] = float(raw.get("char_spacing_px", -2.5))
+        color = raw.get("ink_color")
+        ink["ink_color"] = color if isinstance(color, str) and color else None
     if engine in {"gemini", "onedm"} and profile is not None:
         keys = []
         for sample in list(profile.samples or [])[-2:]:
@@ -129,18 +137,22 @@ def finish_batch(db: Session, batch: BatchJob) -> None:
         artifact_key = files[0][0]
 
     size_mb = round(batch.bytes_written / (1024 * 1024), 2)
-    db.add(ExportRecord(
-        id=new_id("ex"),
-        batch_id=batch.id,
-        batch_name=batch.name,
-        date=utcnow(),
-        file_count=batch.generated,
-        format=fmt,
-        status=export_status,
-        output_dir=prefix,
-        size_mb=size_mb,
-        artifact_key=artifact_key,
-    ))
+    filename = export_filename(batch.name, artifact_key) if artifact_key else ""
+    batch.current_item = filename
+    existing = list(db.scalars(select(ExportRecord).where(ExportRecord.batch_id == batch.id)).all())
+    record = existing[0] if existing else ExportRecord(id=new_id("ex"), batch_id=batch.id)
+    if not existing:
+        db.add(record)
+    for extra in existing[1:]:
+        db.delete(extra)
+    record.batch_name = batch.name
+    record.date = utcnow()
+    record.file_count = batch.generated
+    record.format = fmt
+    record.status = export_status
+    record.output_dir = prefix
+    record.size_mb = size_mb
+    record.artifact_key = artifact_key
     detail = f"{batch.generated} generated, {batch.failed} failed"
     log_activity(db, "batch" if batch.status == "Completed" else "error", batch.name, detail)
 

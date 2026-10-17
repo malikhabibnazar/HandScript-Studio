@@ -6,7 +6,7 @@ import io
 import json
 import time
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -36,8 +36,11 @@ from app.schemas import (
     DocumentOut,
     DocumentUpdate,
     ExportOut,
+    export_filename,
     ImportIssue,
     ImportOut,
+    GlyphInventoryOut,
+    GlyphPreviewIn,
     ProfileCreate,
     ProfileOut,
     ProfileUpdate,
@@ -142,14 +145,51 @@ def list_profiles(db: Session = Depends(get_db)) -> list[Profile]:
     return list(db.scalars(select(Profile).order_by(Profile.created.desc())).all())
 
 
+def _style_dict(engine: str, font_family: str) -> dict:
+    drawn = engine == "drawn"
+    return {
+        "style_id": 9,
+        "bias": 0.75,
+        "variation": 0.15,
+        "engine": engine,
+        "font_family": font_family,
+        "source": "draw" if drawn else "image",
+        "word_size_px": 70,
+        "word_spacing_px": 15,
+        "char_spacing_px": -2.5,
+        "ink_color": None,
+    }
+
+
+def _engine_name(profile: Profile) -> str:
+    style = profile.style if isinstance(profile.style, dict) else {}
+    return str(style.get("engine") or "")
+
+
+def _require_drawn(profile: Profile) -> None:
+    if _engine_name(profile) != "drawn":
+        raise HTTPException(status_code=400, detail="This profile uses an uploaded sample, not drawn letters")
+
+
+def _sync_drawn_status(profile: Profile) -> None:
+    from app.handwriting.glyphs import glyphs_ready
+
+    profile.status = "Ready" if glyphs_ready(profile.id) else "Needs Review"
+
+
 @router.post("/profiles", response_model=ProfileOut, status_code=201)
 def create_profile(body: ProfileCreate, db: Session = Depends(get_db)) -> Profile:
     profile = Profile(
         id=new_id("pf"), name=body.name.strip(), description=body.description,
         status="Needs Review", samples=[], created=utcnow(), preview_text=body.preview_text,
-        style={"style_id": 9, "bias": 0.75, "variation": 0.15, "engine": body.engine, "font_family": body.font_family},
+        style=_style_dict(body.engine, body.font_family),
     )
     db.add(profile)
+    if body.engine == "drawn":
+        from app.handwriting.glyphs import restore_sample
+
+        restore_sample(profile.id)
+        _sync_drawn_status(profile)
     log_activity(db, "document", profile.name, "Handwriting profile created")
     db.commit()
     db.refresh(profile)
@@ -165,6 +205,14 @@ def get_profile(profile_id: str, db: Session = Depends(get_db)) -> Profile:
 def update_profile(profile_id: str, body: ProfileUpdate, db: Session = Depends(get_db)) -> Profile:
     profile = _one(db, Profile, profile_id)
     data = body.model_dump(exclude_unset=True)
+    if "style" in data and isinstance(data["style"], dict):
+        current = _engine_name(profile)
+        nxt = str(data["style"].get("engine") or "")
+        if current == "drawn" and nxt != "drawn":
+            raise HTTPException(status_code=400, detail="Draw profiles stay on the drawn-letter renderer")
+        if current != "drawn" and nxt == "drawn":
+            raise HTTPException(status_code=400, detail="Create a draw-based profile to use drawn letters")
+        data["style"]["source"] = "draw" if nxt == "drawn" else "image"
     for key, value in data.items():
         setattr(profile, key, value)
     if "style" in data and isinstance(profile.style, dict):
@@ -184,6 +232,7 @@ def delete_profile(profile_id: str, db: Session = Depends(get_db)) -> None:
     profile = _one(db, Profile, profile_id)
     if profile.is_default:
         raise HTTPException(status_code=400, detail="Choose another default before deleting this profile")
+    get_storage().delete_prefix(f"glyphs/{profile.id}/")
     db.delete(profile)
     log_activity(db, "document", profile.name, "Handwriting profile deleted")
     db.commit()
@@ -207,6 +256,8 @@ def set_default_profile(profile_id: str, db: Session = Depends(get_db)) -> Profi
 @router.post("/profiles/{profile_id}/samples", response_model=ProfileOut)
 async def add_sample(profile_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)) -> Profile:
     profile = _one(db, Profile, profile_id)
+    if _engine_name(profile) == "drawn":
+        raise HTTPException(status_code=400, detail="Draw profiles store letters from the drawing pad")
     raw = await file.read()
     if not raw:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -237,6 +288,8 @@ async def add_sample(profile_id: str, file: UploadFile = File(...), db: Session 
 @router.post("/profiles/{profile_id}/analyze", response_model=ProfileOut)
 def analyze_profile(profile_id: str, db: Session = Depends(get_db)) -> Profile:
     profile = _one(db, Profile, profile_id)
+    if _engine_name(profile) == "drawn":
+        raise HTTPException(status_code=400, detail="Draw profiles do not use photo analysis")
     if not profile.samples:
         raise HTTPException(status_code=400, detail="Add at least one handwriting sample first")
     profile.status = "Processing"
@@ -245,6 +298,124 @@ def analyze_profile(profile_id: str, db: Session = Depends(get_db)) -> Profile:
     db.commit()
     db.refresh(profile)
     return profile
+
+
+def _glyph_error(exc: ValueError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/profiles/{profile_id}/glyphs", response_model=GlyphInventoryOut)
+def list_glyphs(profile_id: str, db: Session = Depends(get_db)) -> dict:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    from app.handwriting.glyphs import inventory
+
+    return inventory(profile.id)
+
+
+@router.get("/profiles/{profile_id}/glyphs/{set_name}/{key}")
+def get_glyph(profile_id: str, set_name: str, key: str, db: Session = Depends(get_db)) -> Response:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    from app.handwriting.glyphs import read_glyph_png
+
+    try:
+        raw = read_glyph_png(profile.id, set_name, key)
+    except ValueError as exc:
+        raise _glyph_error(exc) from exc
+    if raw is None:
+        raise HTTPException(status_code=404, detail="That letter has not been drawn")
+    return Response(content=raw, media_type="image/png")
+
+
+@router.put("/profiles/{profile_id}/glyphs/{set_name}/{key}", response_model=GlyphInventoryOut)
+async def put_glyph(
+    profile_id: str,
+    set_name: str,
+    key: str,
+    file: UploadFile = File(...),
+    baseline_y: float = Form(...),
+    pad_width: int = Form(...),
+    pad_height: int = Form(...),
+    crop_left: int = Form(...),
+    crop_top: int = Form(...),
+    db: Session = Depends(get_db),
+) -> dict:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    raw = await file.read()
+    from app.handwriting.glyphs import inventory, save_glyph
+
+    try:
+        save_glyph(
+            profile.id, set_name, key, raw,
+            baseline_y=baseline_y, pad_width=pad_width, pad_height=pad_height,
+            crop_left=crop_left, crop_top=crop_top,
+        )
+    except ValueError as exc:
+        raise _glyph_error(exc) from exc
+    _sync_drawn_status(profile)
+    db.commit()
+    return inventory(profile.id)
+
+
+@router.delete("/profiles/{profile_id}/glyphs/{set_name}/{key}", response_model=GlyphInventoryOut)
+def remove_glyph(profile_id: str, set_name: str, key: str, db: Session = Depends(get_db)) -> dict:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    from app.handwriting.glyphs import delete_glyph, inventory
+
+    try:
+        delete_glyph(profile.id, set_name, key)
+    except ValueError as exc:
+        raise _glyph_error(exc) from exc
+    _sync_drawn_status(profile)
+    db.commit()
+    return inventory(profile.id)
+
+
+@router.post("/profiles/{profile_id}/glyphs/restore-sample", response_model=GlyphInventoryOut)
+def restore_glyph_sample(profile_id: str, db: Session = Depends(get_db)) -> dict:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    from app.handwriting.glyphs import inventory, restore_sample
+
+    restore_sample(profile.id)
+    _sync_drawn_status(profile)
+    db.commit()
+    return inventory(profile.id)
+
+
+@router.delete("/profiles/{profile_id}/glyphs", response_model=GlyphInventoryOut)
+def clear_glyph_sample(profile_id: str, db: Session = Depends(get_db)) -> dict:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    from app.handwriting.glyphs import clear_glyphs, inventory
+
+    clear_glyphs(profile.id)
+    _sync_drawn_status(profile)
+    db.commit()
+    return inventory(profile.id)
+
+
+@router.post("/profiles/{profile_id}/preview")
+def preview_glyphs(profile_id: str, body: GlyphPreviewIn, db: Session = Depends(get_db)) -> Response:
+    profile = _one(db, Profile, profile_id)
+    _require_drawn(profile)
+    from app.handwriting.glyph_engine import load_glyph_job, render_ruled_preview
+
+    style = profile.style if isinstance(profile.style, dict) else {}
+    text = (body.text or profile.preview_text or "")[:4000]
+    color = style.get("ink_color")
+    job = load_glyph_job(
+        profile.id,
+        word_size_px=float(style.get("word_size_px", 70)),
+        word_spacing_px=float(style.get("word_spacing_px", 15)),
+        char_spacing_px=float(style.get("char_spacing_px", -2.5)),
+        ink_color=color if isinstance(color, str) else None,
+    )
+    png = render_ruled_preview(text, job, seed=stable_seed(profile.id, text), variation=float(style.get("variation", 0.15)))
+    return Response(content=png, media_type="image/png")
 
 
 # --------------------------------------------------------------- templates
@@ -714,7 +885,7 @@ def download_export(export_id: str, db: Session = Depends(get_db)) -> Response:
         data = get_storage().get(row.artifact_key)
     except Exception as exc:
         raise HTTPException(status_code=404, detail="File is no longer in storage") from exc
-    filename = row.artifact_key.rsplit("/", 1)[-1]
+    filename = export_filename(row.batch_name, row.artifact_key)
     media = "application/zip" if filename.endswith(".zip") else "application/pdf" if filename.endswith(".pdf") else "image/png"
     return Response(content=data, media_type=media, headers={
         "Content-Disposition": f'attachment; filename="{filename}"',

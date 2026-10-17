@@ -70,13 +70,6 @@ export default function DashboardPage() {
               <Link className="option" href="/batch">Import a CSV and generate</Link>
             </div>
           </section>
-          <section className="card">
-            <h2>System</h2>
-            <p className="sub">Services behind this studio</p>
-            {Object.entries(data.system).map(([key, value]) => (
-              <div className="setting-row" key={key}><span className="secondary">{key}</span><strong>{value}</strong></div>
-            ))}
-          </section>
         </div>
       </div>
     </>

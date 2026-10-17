@@ -68,6 +68,15 @@ class Storage:
         return [(str(p.relative_to(self.root)).replace("\\", "/"), p.stat().st_size)
                 for p in base.rglob("*") if p.is_file()]
 
+    def delete(self, key: str) -> None:
+        key = key.lstrip("/")
+        if self._client is not None:
+            self._client.delete_object(Bucket=self.settings.s3_bucket, Key=key)
+            return
+        path = self.root / key
+        if path.is_file():
+            path.unlink()
+
     def delete_prefix(self, prefix: str) -> int:
         freed = 0
         for key, size in self.list_prefix(prefix):

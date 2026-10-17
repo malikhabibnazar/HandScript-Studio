@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Badge, useToast } from "@/components/ui";
+import { BackLink, Badge, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { Element, Template } from "@/lib/types";
 
@@ -33,7 +33,7 @@ export default function TemplateEditorPage() {
     api.template(params.id).then(setTemplate).catch((err: Error) => toast(err.message, "danger"));
   }, [params.id, toast]);
 
-  if (!template) return <div className="loading">Loading template…</div>;
+  if (!template) return <><div className="page-back"><BackLink href="/templates" /></div><div className="loading">Loading template…</div></>;
   const currentTemplate = template;
   const current = template.elements.find((el) => el.id === selected) || null;
 
@@ -57,7 +57,7 @@ export default function TemplateEditorPage() {
     <>
       <div className="row" style={{ marginBottom: 12, justifyContent: "space-between" }}>
         <div className="row">
-          <button className="btn ghost" onClick={() => router.push("/templates")}>Templates</button>
+          <BackLink href="/templates" />
           <strong>{currentTemplate.name}</strong>
           <Badge value={currentTemplate.status} />
         </div>

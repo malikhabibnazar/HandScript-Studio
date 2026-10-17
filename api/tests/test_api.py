@@ -97,6 +97,7 @@ def test_batch_renders_files() -> None:
         exports = client.get("/api/exports").json()
         match = next(item for item in exports if item["batch_id"] == batch_id)
         assert match["status"] == "Partial"
+        assert match["filename"] == "Test notes.pdf"
         download = client.get(f"/api/exports/{match['id']}/download")
         assert download.status_code == 200
         assert download.content[:4] == b"%PDF"
@@ -299,3 +300,183 @@ def test_gemini_accepts_exact_strokes_and_refuses_a_missing_sample() -> None:
         status = client.get("/api/handwriting/status")
         assert status.status_code == 200
         assert status.json()["gemini"]["configured"] is False
+
+
+def _column_runs(image) -> list[tuple[int, int]]:
+    rgba = image.convert("RGBA")
+    pixels = rgba.load()
+    runs: list[tuple[int, int]] = []
+    start = None
+    for x in range(rgba.width):
+        ink = False
+        for y in range(rgba.height):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha > 20 and red < 90 and green < 90 and blue < 90:
+                ink = True
+                break
+        if ink and start is None:
+            start = x
+        elif not ink and start is not None:
+            runs.append((start, x - 1))
+            start = None
+    if start is not None:
+        runs.append((start, image.width - 1))
+    return runs
+
+
+def _gap_between(runs: list[tuple[int, int]]) -> int:
+    if len(runs) < 2:
+        return 0
+    return min(runs[index][0] - runs[index - 1][1] - 1 for index in range(1, len(runs)))
+
+
+def test_drawn_letters_stay_separate_and_image_profiles_still_upload() -> None:
+    from PIL import Image
+
+    from app.handwriting.factory import get_handwriting_engine
+    from app.handwriting.glyph_engine import GlyphJob, choose_set, compose_ink
+    from app.handwriting.glyphs import BY_CHAR
+    from app.render import render_page
+
+    h_key = BY_CHAR["H"].key
+    e_key = BY_CHAR["e"].key
+    left = Image.new("RGBA", (36, 48), (0, 0, 0, 255))
+    right = Image.new("RGBA", (20, 48), (0, 0, 0, 255))
+    metrics = {
+        "pad_width": 280, "pad_height": 220, "baseline_y": 150,
+        "crop_left": 10, "crop_top": 30, "ink_width": 36, "ink_height": 48,
+    }
+    other = dict(metrics)
+    other["ink_width"] = 20
+    job = GlyphJob(
+        images={("set1", h_key): left, ("set1", e_key): left, ("set2", e_key): right},
+        metrics={("set1", h_key): metrics, ("set1", e_key): metrics, ("set2", e_key): other},
+        word_size_px=70, word_spacing_px=15, char_spacing_px=-8,
+    )
+    ink = compose_ink("He", job, target_em=70, max_width=400, max_height=200, seed=1, variation=0, line_gap_px=8)
+    runs = _column_runs(ink)
+    assert len(runs) == 2
+    assert _gap_between(runs) >= 2
+
+    alternate_seed = next(
+        seed for seed in range(80)
+        if choose_set(0, e_key, seed, True, True) != choose_set(1, e_key, seed, True, True)
+    )
+    varied = compose_ink("ee", job, target_em=70, max_width=400, max_height=200, seed=alternate_seed, variation=0, line_gap_px=8)
+    varied_runs = _column_runs(varied)
+    assert len(varied_runs) == 2
+    assert _gap_between(varied_runs) >= 2
+    widths = [end - start + 1 for start, end in varied_runs]
+    assert widths[0] != widths[1]
+
+    missing = compose_ink("H?H", job, target_em=70, max_width=400, max_height=200, seed=1, variation=0, line_gap_px=8)
+    pair = compose_ink("HH", job, target_em=70, max_width=400, max_height=200, seed=1, variation=0, line_gap_px=8)
+    assert len(_column_runs(missing)) == 2
+    assert missing.getbbox()[2] > pair.getbbox()[2]
+
+    with TestClient(app) as client:
+        created = client.post("/api/profiles", json={"name": "Print hand", "engine": "drawn", "description": "Drawn letters"})
+        assert created.status_code == 201
+        body = created.json()
+        assert body["style"]["engine"] == "drawn"
+        assert body["style"]["source"] == "draw"
+        assert body["status"] == "Ready"
+        profile_id = body["id"]
+        inventory = client.get(f"/api/profiles/{profile_id}/glyphs")
+        assert inventory.status_code == 200
+        assert inventory.json()["total"] == 90
+        assert inventory.json()["set1_count"] == 90
+        assert inventory.json()["ready"] is True
+
+        locked = client.patch(f"/api/profiles/{profile_id}", json={
+            "style": {"style_id": 9, "bias": 0.75, "variation": 0.15, "engine": "graves"},
+        })
+        assert locked.status_code == 400
+        uploaded = client.post(
+            f"/api/profiles/{profile_id}/samples",
+            files={"file": ("note.png", b"not-a-real-png", "image/png")},
+        )
+        assert uploaded.status_code == 400
+
+        preview = client.post(f"/api/profiles/{profile_id}/preview", json={"text": "He"})
+        assert preview.status_code == 200
+        assert preview.content.startswith(b"\x89PNG")
+
+        photo = client.post("/api/profiles", json={"name": "Photo hand", "engine": "pillow", "font_family": "caveat"})
+        assert photo.status_code == 201
+        assert photo.json()["style"]["engine"] == "pillow"
+        assert photo.json()["style"]["source"] == "image"
+        assert client.get(f"/api/profiles/{photo.json()['id']}/glyphs").status_code == 400
+        sample = client.post(
+            f"/api/profiles/{photo.json()['id']}/samples",
+            files={"file": ("note.png", b"not-a-real-png", "image/png")},
+        )
+        assert sample.status_code == 200
+        assert sample.json()["sample_count"] == 1
+
+        page = render_page(
+            {"width_in": 6, "height_in": 4},
+            [{
+                "id": "body", "type": "Text", "name": "Body", "x": 0.3, "y": 0.4,
+                "width": 5.2, "height": 1.4, "font_size": 28, "content": "He", "visible": True,
+            }],
+            {},
+            dpi=96, seed=4, engine="drawn", variation=0, glyph_profile_id=profile_id,
+            word_size_px=70, word_spacing_px=15, char_spacing_px=-2.5,
+        )
+        page_runs = _column_runs(page)
+        assert len(page_runs) >= 2
+        assert _gap_between(page_runs) >= 2
+        assert get_handwriting_engine("drawn").name == "drawn"
+
+        document = client.post("/api/documents", json={
+            "name": "Print card", "template_id": "tpl-thankyou", "profile_id": profile_id,
+        })
+        assert document.status_code == 201
+        pdf = client.get(f"/api/documents/{document.json()['id']}/preview")
+        assert pdf.status_code == 200
+        assert pdf.content.startswith(b"%PDF")
+
+        cleared = client.delete(f"/api/profiles/{profile_id}/glyphs")
+        assert cleared.status_code == 200
+        assert cleared.json()["set1_count"] == 0
+        assert client.get(f"/api/profiles/{profile_id}").json()["status"] == "Needs Review"
+        restored = client.post(f"/api/profiles/{profile_id}/glyphs/restore-sample")
+        assert restored.status_code == 200
+        assert restored.json()["set1_count"] == 90
+        assert client.get(f"/api/profiles/{profile_id}").json()["status"] == "Ready"
+
+        imported = client.post("/api/imports", files={"file": ("codes.csv", b"code\n746621250\n", "text/csv")})
+        assert imported.status_code == 201
+        batch = client.post("/api/batches", json={
+            "name": "Print batch",
+            "template_id": "tpl-thankyou",
+            "profile_id": profile_id,
+            "import_id": imported.json()["id"],
+            "export_format": "PDF",
+            "individual": True,
+            "combined": False,
+        })
+        assert batch.status_code == 201
+        batch_id = batch.json()["id"]
+
+    database.init_db()
+    assert database.SessionLocal is not None
+    for _ in range(6):
+        db = database.SessionLocal()
+        try:
+            process_one_tick(db)
+        finally:
+            db.close()
+
+    with TestClient(app) as client:
+        finished = client.get(f"/api/batches/{batch_id}").json()
+        assert finished["status"] == "Completed"
+        assert finished["generated"] == 1
+        exports = client.get("/api/exports").json()
+        match = next(item for item in exports if item["batch_id"] == batch_id)
+        assert match["filename"] == "Print batch.pdf"
+        download = client.get(f"/api/exports/{match['id']}/download")
+        assert download.status_code == 200
+        assert download.content.startswith(b"%PDF")
+        assert "Print batch.pdf" in download.headers["content-disposition"]

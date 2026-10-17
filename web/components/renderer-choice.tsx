@@ -11,6 +11,7 @@ export const ENGINE_LABEL: Record<HandwritingEngineName, string> = {
   hw2font: "hw2font",
   fontmaker: "Font maker",
   graves: "Graves AI",
+  drawn: "Drawn letters",
 };
 
 const CHOICES: { id: HandwritingEngineName; title: string; body: string }[] = [

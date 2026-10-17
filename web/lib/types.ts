@@ -17,7 +17,7 @@ export type Analysis = {
   notes: string[];
 };
 
-export type HandwritingEngineName = "graves" | "handwrite" | "pillow" | "hw2font" | "fontmaker" | "gemini" | "onedm";
+export type HandwritingEngineName = "graves" | "handwrite" | "pillow" | "hw2font" | "fontmaker" | "gemini" | "onedm" | "drawn";
 
 export type PillowFace = "caveat" | "homemade" | "patrick" | "kalam" | "sacramento" | "architects";
 
@@ -28,6 +28,44 @@ export type ProfileStyle = {
   engine: HandwritingEngineName;
   font_family: PillowFace;
   font_path?: string | null;
+  source: "image" | "draw";
+  word_size_px: number;
+  word_spacing_px: number;
+  char_spacing_px: number;
+  ink_color: string | null;
+};
+
+export type GlyphSetName = "set1" | "set2";
+
+export type GlyphGroup = "uppercase" | "lowercase" | "symbols";
+
+export type GlyphMetrics = {
+  pad_width: number;
+  pad_height: number;
+  baseline_y: number;
+  crop_left: number;
+  crop_top: number;
+  ink_width: number;
+  ink_height: number;
+};
+
+export type GlyphSlot = {
+  key: string;
+  char: string;
+  group: GlyphGroup;
+  set1: GlyphMetrics | null;
+  set2: GlyphMetrics | null;
+};
+
+export type GlyphInventory = {
+  total: number;
+  set1_count: number;
+  set2_count: number;
+  ready: boolean;
+  pad_width: number;
+  pad_height: number;
+  baseline_y: number;
+  slots: GlyphSlot[];
 };
 
 export type FaceInfo = {
@@ -190,6 +228,7 @@ export type ExportRecord = {
   output_dir: string;
   size_mb: number;
   has_file: boolean;
+  filename: string;
 };
 
 export type Activity = {

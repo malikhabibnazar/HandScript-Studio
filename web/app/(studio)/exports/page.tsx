@@ -29,11 +29,12 @@ export default function ExportsPage() {
       {visible.length === 0 ? <Empty title="No exports" body="Finished batches appear here with a download." /> : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Batch</th><th>Date</th><th>Files</th><th>Format</th><th>Status</th><th>Size</th><th /></tr></thead>
+            <thead><tr><th>Batch</th><th>File</th><th>Date</th><th>Files</th><th>Format</th><th>Status</th><th>Size</th><th /></tr></thead>
             <tbody>
               {visible.map((row) => (
                 <tr key={row.id}>
                   <td>{row.batch_name}</td>
+                  <td>{row.filename}</td>
                   <td>{formatDate(row.date)}</td>
                   <td>{row.file_count.toLocaleString()}</td>
                   <td>{row.format}</td>

@@ -46,7 +46,11 @@ export default function BatchProgressPage() {
           <text x="60" y="66" textAnchor="middle" fontSize="22" fill="var(--text)" fontFamily="Segoe UI, sans-serif">{percent}%</text>
         </svg>
         <p>{batch.generated.toLocaleString()} generated · {batch.failed.toLocaleString()} failed · {batch.total.toLocaleString()} total</p>
-        <p className="muted" style={{ marginTop: 6 }}>{batch.current_item || batch.error || "Waiting for the worker"}</p>
+        <p className="muted" style={{ marginTop: 6 }}>{
+          done && exportRow?.filename
+            ? `Saved to Exports · ${exportRow.filename}`
+            : batch.current_item || batch.error || (done ? "Finished" : "Waiting for the worker")
+        }</p>
         <div className="meter" style={{ marginTop: 16 }}><span style={{ width: `${percent}%` }} /></div>
       </section>
       <div className="row" style={{ justifyContent: "center" }}>
@@ -66,7 +70,7 @@ export default function BatchProgressPage() {
             toast("Download started", "success");
           }}>Download</button>
         ) : null}
-        <button className="btn secondary" onClick={() => router.push("/exports")}>Export history</button>
+        {done ? <button className="btn secondary" onClick={() => router.push("/exports")}>View in Exports</button> : null}
       </div>
       {!batch.runnable ? <p className="muted" style={{ textAlign: "center" }}>This entry is from the sample history. Start a new batch to render files.</p> : null}
     </div>

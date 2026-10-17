@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
+import { BackLink, Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -45,10 +45,11 @@ export default function DocumentsPage() {
     }).catch((err: Error) => toast(err.message, "danger"));
   }
 
-  if (!rows) return <div className="loading">Loading documents…</div>;
+  if (!rows) return <><div className="page-back"><BackLink href="/dashboard" /></div><div className="loading">Loading documents…</div></>;
 
   return (
     <>
+      <div className="page-back"><BackLink href="/dashboard" /></div>
       <PageHeader title="Documents" subtitle="Create, organise and export your documents.">
         <button className="btn secondary" onClick={() => router.push("/batch")}><Icon name="exports" size={16} /> Import</button>
         <button className="btn primary" onClick={openCreate}><Icon name="plus" size={16} /> Create Document</button>

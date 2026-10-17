@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Badge, useToast } from "@/components/ui";
+import { BackLink, Badge, useToast } from "@/components/ui";
 import { api, previewUrl } from "@/lib/api";
 import type { DocumentDetail, Element, Profile } from "@/lib/types";
 
@@ -29,7 +29,7 @@ export default function DocumentEditorPage() {
     api.profiles().then(setProfiles).catch(() => undefined);
   }, [params.id, toast]);
 
-  if (!doc || !doc.template) return <div className="loading">Loading document…</div>;
+  if (!doc || !doc.template) return <><div className="page-back"><BackLink href="/documents" /></div><div className="loading">Loading document…</div></>;
   const currentDoc = doc;
   const template = doc.template;
   const current = elements.find((el) => el.id === selected) || null;
@@ -56,7 +56,7 @@ export default function DocumentEditorPage() {
     <>
       <div className="row" style={{ marginBottom: 12, justifyContent: "space-between" }}>
         <div className="row">
-          <button className="btn ghost" onClick={() => router.push("/documents")}>Documents</button>
+          <BackLink href="/documents" />
           <strong>{currentDoc.name}</strong>
           <Badge value={currentDoc.status} />
         </div>

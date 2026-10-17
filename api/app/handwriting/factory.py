@@ -105,6 +105,12 @@ def _for_profile(name: str, font_path: str | None, font_family: str | None = Non
 
             _named["onedm"] = OneDMEngine()
         return _named["onedm"]
+    if key == "drawn":
+        if "drawn" not in _named:
+            from app.handwriting.glyph_engine import GlyphEngine
+
+            _named["drawn"] = GlyphEngine()
+        return _named["drawn"]
     if key == "graves":
         if "graves" not in _named:
             loaded, _message = _load_graves()

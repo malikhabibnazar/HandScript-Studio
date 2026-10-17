@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
+import { BackLink, Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -21,10 +21,11 @@ export default function TemplatesPage() {
   }
   useEffect(() => { load(); }, []);
 
-  if (!rows) return <div className="loading">Loading templates…</div>;
+  if (!rows) return <><div className="page-back"><BackLink href="/dashboard" /></div><div className="loading">Loading templates…</div></>;
 
   return (
     <>
+      <div className="page-back"><BackLink href="/dashboard" /></div>
       <PageHeader title="Templates" subtitle="4×6 cards and #10 envelopes. Open one to edit the layout.">
         <button className="btn primary" onClick={() => setOpen(true)}><Icon name="plus" size={16} /> New Template</button>
       </PageHeader>

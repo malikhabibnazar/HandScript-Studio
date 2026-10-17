@@ -1,6 +1,7 @@
 """API schemas."""
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
@@ -28,8 +29,9 @@ class AnalysisOut(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-PROFILE_ENGINES = {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm"}
+PROFILE_ENGINES = {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm", "drawn"}
 PILLOW_FACES = {"caveat", "homemade", "patrick", "kalam", "sacramento", "architects"}
+_INK_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
 
 
 class ProfileStyle(BaseModel):
@@ -39,14 +41,52 @@ class ProfileStyle(BaseModel):
     engine: str = "graves"
     font_family: str = "caveat"
     font_path: str | None = None
+    source: str = "image"
+    word_size_px: float = 70
+    word_spacing_px: float = 15
+    char_spacing_px: float = -2.5
+    ink_color: str | None = None
 
     @field_validator("engine")
     @classmethod
     def _engine(cls, value: str) -> str:
         engine = (value or "graves").strip().lower()
         if engine not in PROFILE_ENGINES:
-            raise ValueError("engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, or onedm")
+            raise ValueError("engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, onedm, or drawn")
         return engine
+
+    @field_validator("source")
+    @classmethod
+    def _source(cls, value: str) -> str:
+        source = (value or "image").strip().lower()
+        if source not in {"image", "draw"}:
+            raise ValueError("source must be image or draw")
+        return source
+
+    @field_validator("word_size_px")
+    @classmethod
+    def _word_size(cls, value: float) -> float:
+        return min(160.0, max(24.0, float(value)))
+
+    @field_validator("word_spacing_px")
+    @classmethod
+    def _word_spacing(cls, value: float) -> float:
+        return min(80.0, max(0.0, float(value)))
+
+    @field_validator("char_spacing_px")
+    @classmethod
+    def _char_spacing(cls, value: float) -> float:
+        return min(40.0, max(-12.0, float(value)))
+
+    @field_validator("ink_color")
+    @classmethod
+    def _ink(cls, value: str | None) -> str | None:
+        if value is None or str(value).strip() == "":
+            return None
+        color = str(value).strip()
+        if not _INK_COLOR.fullmatch(color):
+            raise ValueError("ink_color must be #RRGGBB or empty")
+        return color.lower()
 
     @field_validator("font_family")
     @classmethod
@@ -87,7 +127,7 @@ class ProfileCreate(BaseModel):
     def _engine(cls, value: str) -> str:
         engine = (value or "handwrite").strip().lower()
         if engine not in PROFILE_ENGINES:
-            raise ValueError("engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, or onedm")
+            raise ValueError("engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, onedm, or drawn")
         return engine
 
     @field_validator("font_family")
@@ -105,6 +145,39 @@ class ProfileUpdate(BaseModel):
     preview_text: str | None = None
     status: str | None = None
     style: ProfileStyle | None = None
+
+
+class GlyphMetricsOut(BaseModel):
+    pad_width: int
+    pad_height: int
+    baseline_y: float
+    crop_left: int
+    crop_top: int
+    ink_width: int
+    ink_height: int
+
+
+class GlyphSlotOut(BaseModel):
+    key: str
+    char: str
+    group: str
+    set1: GlyphMetricsOut | None = None
+    set2: GlyphMetricsOut | None = None
+
+
+class GlyphInventoryOut(BaseModel):
+    total: int
+    set1_count: int
+    set2_count: int
+    ready: bool
+    pad_width: int
+    pad_height: int
+    baseline_y: int
+    slots: list[GlyphSlotOut]
+
+
+class GlyphPreviewIn(BaseModel):
+    text: str = ""
 
 
 class ElementOut(BaseModel):
@@ -242,6 +315,13 @@ class BatchOut(ORMModel):
         return round((self.generated + self.failed) / self.total, 4)
 
 
+def export_filename(batch_name: str, artifact_key: str) -> str:
+    stored = artifact_key.rsplit("/", 1)[-1] if artifact_key else ""
+    ext = stored.rsplit(".", 1)[-1] if "." in stored else ""
+    stem = re.sub(r"\s+", " ", re.sub(r"[^A-Za-z0-9 ._-]+", " ", batch_name)).strip(" .-") or "export"
+    return f"{stem}.{ext}" if ext else stem
+
+
 class ExportOut(ORMModel):
     id: str
     batch_id: str
@@ -258,6 +338,13 @@ class ExportOut(ORMModel):
     @property
     def has_file(self) -> bool:
         return bool(self.artifact_key)
+
+    @computed_field
+    @property
+    def filename(self) -> str:
+        if not self.artifact_key:
+            return ""
+        return export_filename(self.batch_name, self.artifact_key)
 
 
 class ActivityOut(ORMModel):

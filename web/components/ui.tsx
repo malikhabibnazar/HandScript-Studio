@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
 import { toneFor } from "@/lib/format";
+import { Icon } from "./icons";
 
 type Toast = { id: number; text: string; tone: string };
 const ToastContext = createContext<(text: string, tone?: string) => void>(() => undefined);
@@ -29,6 +31,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
 export function Badge({ value }: { value: string }) {
   return <span className={`badge ${toneFor(value)}`}>{value}</span>;
+}
+
+export function BackLink({ href }: { href: string }) {
+  return (
+    <Link href={href} className="back-link">
+      <Icon name="back" size={16} />
+      Back
+    </Link>
+  );
 }
 
 export function PageHeader({ title, subtitle, children }: { title: string; subtitle?: string; children?: ReactNode }) {
