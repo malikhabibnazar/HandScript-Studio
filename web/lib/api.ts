@@ -7,6 +7,7 @@ import type {
   ImportSummary,
   HandwritingEngineName,
   HandwritingStatus,
+  HandfontedGlyph,
   PillowFace,
   Profile,
   Settings,
@@ -14,6 +15,26 @@ import type {
 } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+
+async function requestBlob(path: string, init?: RequestInit): Promise<Blob> {
+  const headers = new Headers(init?.headers);
+  if (init?.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const response = await fetch(`${API_URL}${path}`, { ...init, headers, cache: "no-store" });
+  if (!response.ok) {
+    const text = await response.text();
+    let detail = "Request failed";
+    try {
+      const data = text ? JSON.parse(text) : null;
+      if (typeof data?.detail === "string") detail = data.detail;
+    } catch {
+      detail = text || detail;
+    }
+    throw new Error(detail);
+  }
+  return response.blob();
+}
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
@@ -54,6 +75,26 @@ export const api = {
     body.set("file", file);
     return request<Profile>(`/api/profiles/${id}/samples`, { method: "POST", body });
   },
+  processHandfonted: (id: string, file: File) => {
+    const body = new FormData();
+    body.set("file", file);
+    return request<Profile>(`/api/profiles/${id}/handfonted/process`, { method: "POST", body });
+  },
+  saveHandfontedGlyphs: (id: string, glyphs: HandfontedGlyph[], thickness: number) =>
+    request<Profile>(`/api/profiles/${id}/handfonted/glyphs`, {
+      method: "PUT",
+      body: JSON.stringify({ glyphs, thickness }),
+    }),
+  generateHandfonted: (id: string, glyphs: HandfontedGlyph[], thickness: number) =>
+    request<Profile>(`/api/profiles/${id}/handfonted/generate`, {
+      method: "POST",
+      body: JSON.stringify({ glyphs, thickness }),
+    }),
+  previewHandfonted: (id: string, text: string) =>
+    requestBlob(`/api/profiles/${id}/handfonted/preview`, {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    }),
 
   templates: () => request<Template[]>("/api/templates"),
   template: (id: string) => request<Template>(`/api/templates/${id}`),

@@ -48,6 +48,14 @@ Each handwriting profile chooses its own renderer:
 - **Graves AI**: Uses a local Graves LSTM with built-in style primers (`style_id`), `bias`, and `variation`.
 - **Handwriting font**: Draws locally with bundled handwriting faces (Caveat, Homemade Apple, Patrick Hand, Kalam, Sacramento, or Architects Daughter).
 - **Handwrite / hw2font / Font maker**: Turn filled specimen sheets into personal fonts using Potrace and FontForge.
+- **Draw your font**: [draw-your-font](https://drawyourfont.com) (`npx draw-your-font`). A freeform photo or a printed template becomes a local TTF and WOFF2. Node.js 18+ is the only requirement.
+- **HandFonted**: [HandFonted](https://github.com/reshamgaire/HandFonted) runs in its own container so Paddle and its PyTorch stay out of the API. Create a profile with that option, upload one alphabet photo, correct the letters, generate the font, then preview a sentence.
+
+```bash
+docker compose up -d --build handfonted
+```
+
+The API reaches it at `http://127.0.0.1:8010`. The first start loads the models and can take a few minutes.
 
 Install the pretrained weights once. The download converts the published checkpoint to a NumPy file. TensorFlow is not required.
 

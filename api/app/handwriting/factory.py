@@ -47,6 +47,12 @@ def engine_status() -> dict:
     from app.handwriting.onedm_engine import onedm_status
 
     status["onedm"] = onedm_status()
+    from app.handwriting.drawfont_engine import drawfont_status
+
+    status["drawfont"] = drawfont_status()
+    from app.handwriting.handfonted_client import handfonted_status
+
+    status["handfonted"] = handfonted_status()
     return status
 
 
@@ -86,7 +92,7 @@ def _for_profile(name: str, font_path: str | None, font_family: str | None = Non
 
             _named[cache] = PillowEngine(font_family)
         return _named[cache]
-    if key in {"hw2font", "fontmaker"}:
+    if key in {"hw2font", "fontmaker", "drawfont", "handfonted"}:
         cache = f"{key}:{font_path or ''}"
         if cache not in _named:
             from app.handwriting.sheet_engine import SheetEngine

@@ -78,7 +78,7 @@ def attach_personal_font(profile_id: str, samples: list, style: dict, read_sampl
     """Keep a converted font on the profile when the chosen sheet tool can build one."""
     stored = dict(style or {})
     engine = str(stored.get("engine") or "").lower()
-    if engine not in {"handwrite", "hw2font", "fontmaker"}:
+    if engine not in {"handwrite", "hw2font", "fontmaker", "drawfont"}:
         return stored
     if not samples:
         return stored
@@ -89,6 +89,39 @@ def attach_personal_font(profile_id: str, samples: list, style: dict, read_sampl
 
         if not sheet_status()["personal_font"]:
             return stored
+    from app.config import get_settings
+
+    if engine == "drawfont":
+        photos: list[tuple[str, bytes]] = []
+        for sample in samples:
+            if not isinstance(sample, dict):
+                continue
+            key = f"samples/{profile_id}/{sample.get('id')}-{sample.get('filename')}"
+            try:
+                photos.append((str(sample.get("filename") or "sample.png"), read_sample(key)))
+            except Exception as exc:
+                log.info("Sample %s could not be read for draw-your-font: %s", key, exc)
+        dest = Path(get_settings().storage_dir) / "drawfont" / f"{profile_id}.ttf"
+        from app.handwriting.drawfont_engine import convert_photos
+
+        error = convert_photos(
+            photos,
+            dest,
+            capture=str(stored.get("capture") or "minimal"),
+            chars=str(stored.get("chars") or ""),
+            smooth=float(stored.get("smooth") if stored.get("smooth") is not None else 1),
+            weight=float(stored.get("weight") if stored.get("weight") is not None else 0),
+        )
+        if error:
+            log.info("Profile %s is using the built-in draw-your-font face: %s", profile_id, error)
+            stored["font_error"] = error
+            return stored
+        stored["font_path"] = str(dest)
+        web = dest.with_suffix(".woff2")
+        stored["web_font_path"] = str(web) if web.is_file() else None
+        stored["font_error"] = None
+        return stored
+
     sample = samples[-1]
     key = f"samples/{profile_id}/{sample.get('id')}-{sample.get('filename')}"
     try:
@@ -96,8 +129,6 @@ def attach_personal_font(profile_id: str, samples: list, style: dict, read_sampl
     except Exception as exc:
         log.info("Sample %s could not be read for handwrite: %s", key, exc)
         return stored
-    from app.config import get_settings
-
     suffix = ".otf" if engine == "hw2font" else ".ttf"
     dest = Path(get_settings().storage_dir) / "handwrite" / f"{profile_id}-{engine}{suffix}"
     if engine == "handwrite":

@@ -20,7 +20,7 @@ from app.handwriting.ttf_draw import render_face
 log = logging.getLogger(__name__)
 
 THIRD_PARTY = Path(__file__).resolve().parents[2] / "third_party"
-FALLBACK = {"hw2font": "homemade", "fontmaker": "sacramento"}
+FALLBACK = {"hw2font": "homemade", "fontmaker": "sacramento", "drawfont": "kalam", "handfonted": "architects"}
 
 
 def _vendor_path() -> None:
@@ -79,7 +79,21 @@ class SheetEngine:
         )
 
     def render_wrapped(self, text: str, *, max_width_px, max_height_px, style_id, bias, variation, font_size_pt, dpi, seed, line_gap_px) -> Image.Image:
-        del style_id, bias, variation, seed
+        del style_id, bias, variation
+        if self.name == "handfonted":
+            from app.handwriting.handfonted_draw import render_varied
+
+            varied = render_varied(
+                text,
+                max_width_px=max_width_px,
+                max_height_px=max_height_px,
+                font_size_pt=font_size_pt,
+                dpi=dpi,
+                seed=seed,
+                line_gap_px=line_gap_px,
+            )
+            if varied is not None:
+                return varied
         return render_face(
             self.font_path, text, weight=self.weight, max_width_px=max_width_px, max_height_px=max_height_px,
             font_size_pt=font_size_pt, dpi=dpi, line_gap_px=line_gap_px,

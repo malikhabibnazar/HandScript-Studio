@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     onedm_enabled: bool = True
     onedm_weights_path: str = "./data/onedm/weights/epoch-ckpt.pt"
     onedm_device: str = "auto"
+    handfonted_url: str = "http://127.0.0.1:8010"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
