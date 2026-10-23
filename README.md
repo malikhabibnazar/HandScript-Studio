@@ -1,5 +1,7 @@
 # HandScript Studio
 
+Using this on your own computer, with no programming setup: open [START_HERE.md](START_HERE.md) and double-click **Start HandScript Studio**.
+
 Web application for generating printable 4×6 cards and #10 envelopes from editable templates and handwriting profiles.
 
 The interface is **Next.js**. The API, database, file storage and batch worker are **Python / FastAPI**. Pages are drawn at the template's real physical size. Handwriting is a local Graves LSTM when its weights are installed, and a script font otherwise. PDF and PNG use the same pixels.
