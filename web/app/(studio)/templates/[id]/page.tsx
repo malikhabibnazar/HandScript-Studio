@@ -3,7 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { BackLink, Badge, useToast } from "@/components/ui";
+import { BackLink, Badge, useConfirm, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import type { Element, Template } from "@/lib/types";
 
@@ -28,10 +28,35 @@ export default function TemplateEditorPage() {
   const [template, setTemplate] = useState<Template | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [zoom, setZoom] = useState(0.9);
+  const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
     api.template(params.id).then(setTemplate).catch((err: Error) => toast(err.message, "danger"));
   }, [params.id, toast]);
+
+  async function removeTemplate() {
+    if (!template) return;
+    const deleted = await confirm({
+      title: "Delete template?",
+      message: `"${template.name}" will be removed. Documents already created keep their layout.`,
+      confirmLabel: "Delete template",
+      action: () => api.deleteTemplate(template.id),
+    });
+    if (!deleted) return;
+    toast("Template deleted", "success");
+    router.push("/templates");
+  }
+
+  async function removeBlock(block: Element) {
+    const removed = await confirm({
+      title: "Remove block?",
+      message: `"${block.name}" will be removed from this template. Save the template to keep the change.`,
+      confirmLabel: "Remove block",
+    });
+    if (!removed) return;
+    setTemplate((item) => item ? { ...item, elements: item.elements.filter((el) => el.id !== block.id) } : item);
+    setSelected(null);
+  }
 
   if (!template) return <><div className="page-back"><BackLink href="/templates" /></div><div className="loading">Loading template…</div></>;
   const currentTemplate = template;
@@ -55,6 +80,7 @@ export default function TemplateEditorPage() {
 
   return (
     <>
+      {dialog}
       <div className="row" style={{ marginBottom: 12, justifyContent: "space-between" }}>
         <div className="row">
           <BackLink href="/templates" />
@@ -65,10 +91,7 @@ export default function TemplateEditorPage() {
           <button className="btn secondary small" onClick={() => setZoom((value) => Math.max(0.5, +(value - 0.1).toFixed(2)))}>−</button>
           <span className="muted">{Math.round(zoom * 100)}%</span>
           <button className="btn secondary small" onClick={() => setZoom((value) => Math.min(1.6, +(value + 0.1).toFixed(2)))}>+</button>
-          <button className="btn danger small" onClick={async () => {
-            await api.deleteTemplate(currentTemplate.id);
-            router.push("/templates");
-          }}>Delete</button>
+          <button className="btn danger small" type="button" onClick={() => { void removeTemplate(); }}>Delete</button>
           <button className="btn primary" onClick={save}>Save</button>
         </div>
       </div>
@@ -113,7 +136,7 @@ export default function TemplateEditorPage() {
               <div className="field"><label>Content</label><textarea value={current.content} onChange={(event) => patchElement(current.id, { content: event.target.value })} /></div>
               <div className="field"><label>Font size</label><input type="number" value={current.font_size} onChange={(event) => patchElement(current.id, { font_size: Number(event.target.value) })} /></div>
               <label className="check"><input type="checkbox" checked={current.visible} onChange={(event) => patchElement(current.id, { visible: event.target.checked })} /> Visible</label>
-              <button className="btn danger" onClick={() => setTemplate({ ...currentTemplate, elements: currentTemplate.elements.filter((el) => el.id !== current.id) })}>Remove block</button>
+              <button className="btn danger" type="button" onClick={() => { void removeBlock(current); }}>Remove block</button>
             </>
           ) : <p className="secondary">Select a block to edit it. Drag blocks to reposition them.</p>}
         </aside>

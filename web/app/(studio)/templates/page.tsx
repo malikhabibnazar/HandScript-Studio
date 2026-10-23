@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BackLink, Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
+import { BackLink, Badge, Empty, Modal, PageHeader, useConfirm, useToast } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -15,16 +15,30 @@ export default function TemplatesPage() {
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [kind, setKind] = useState("4×6 Card");
+  const { confirm, dialog } = useConfirm();
 
   function load() {
     api.templates().then(setRows).catch((err: Error) => toast(err.message, "danger"));
   }
   useEffect(() => { load(); }, []);
 
+  async function remove(item: Template) {
+    const deleted = await confirm({
+      title: "Delete template?",
+      message: `"${item.name}" will be removed. Documents already created keep their layout.`,
+      confirmLabel: "Delete template",
+      action: () => api.deleteTemplate(item.id),
+    });
+    if (!deleted) return;
+    toast("Template deleted", "success");
+    setRows((current) => current?.filter((row) => row.id !== item.id) ?? current);
+  }
+
   if (!rows) return <><div className="page-back"><BackLink href="/dashboard" /></div><div className="loading">Loading templates…</div></>;
 
   return (
     <>
+      {dialog}
       <div className="page-back"><BackLink href="/dashboard" /></div>
       <PageHeader title="Templates" subtitle="4×6 cards and #10 envelopes. Open one to edit the layout.">
         <button className="btn primary" onClick={() => setOpen(true)}><Icon name="plus" size={16} /> New Template</button>
@@ -42,13 +56,16 @@ export default function TemplatesPage() {
               </div>
               <p className="muted" style={{ marginTop: 6 }}>{item.kind} · {item.width_in} × {item.height_in} in</p>
               <p className="muted">{formatDate(item.modified)}</p>
-              <div className="row" style={{ marginTop: 8 }}>
-                <span className="btn ghost small" onClick={async (event) => {
-                  event.stopPropagation();
+              <div className="row" style={{ marginTop: 8 }} onClick={(event) => event.stopPropagation()}>
+                <button type="button" className="btn ghost small" onClick={async () => {
                   const copy = await api.duplicateTemplate(item.id);
                   toast("Template duplicated", "success");
                   router.push(`/templates/${copy.id}`);
-                }}>Duplicate</span>
+                }}>Duplicate</button>
+                <button type="button" className="btn danger small" aria-label={`Delete ${item.name}`} onClick={() => { void remove(item); }}>
+                  <Icon name="trash" size={14} />
+                  Delete
+                </button>
               </div>
             </div>
           ))}

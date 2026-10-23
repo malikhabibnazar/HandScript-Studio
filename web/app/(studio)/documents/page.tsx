@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BackLink, Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
+import { BackLink, Badge, Empty, Modal, PageHeader, useConfirm, useToast } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
@@ -23,6 +23,7 @@ export default function DocumentsPage() {
   const [templateId, setTemplateId] = useState("");
   const [profileId, setProfileId] = useState("");
   const [name, setName] = useState("");
+  const { confirm, dialog } = useConfirm();
 
   function load(nextQuery = query, nextStatus = status) {
     api.documents(nextQuery, nextStatus).then(setRows).catch((err: Error) => toast(err.message, "danger"));
@@ -45,10 +46,43 @@ export default function DocumentsPage() {
     }).catch((err: Error) => toast(err.message, "danger"));
   }
 
+  async function removeDocument(row: DocumentItem) {
+    const deleted = await confirm({
+      title: "Delete document?",
+      message: `"${row.name}" will be permanently removed. This cannot be undone.`,
+      confirmLabel: "Delete document",
+      action: () => api.deleteDocument(row.id),
+    });
+    if (!deleted) return;
+    setSelected((current) => current.filter((id) => id !== row.id));
+    toast("Document deleted", "success");
+    setRows((current) => current?.filter((item) => item.id !== row.id) ?? current);
+  }
+
+  async function removeSelected() {
+    const ids = selected;
+    const picked = (rows ?? []).filter((row) => ids.includes(row.id));
+    const count = ids.length;
+    const message = count === 1 && picked.length === 1
+      ? `"${picked[0].name}" will be permanently removed. This cannot be undone.`
+      : `${count} documents will be permanently removed. This cannot be undone.`;
+    const deleted = await confirm({
+      title: count === 1 ? "Delete document?" : "Delete documents?",
+      message,
+      confirmLabel: count === 1 ? "Delete document" : "Delete documents",
+      action: () => api.bulkDeleteDocuments(ids),
+    });
+    if (!deleted) return;
+    setSelected([]);
+    toast(count === 1 ? "Document deleted" : "Documents deleted", "success");
+    load();
+  }
+
   if (!rows) return <><div className="page-back"><BackLink href="/dashboard" /></div><div className="loading">Loading documents…</div></>;
 
   return (
     <>
+      {dialog}
       <div className="page-back"><BackLink href="/dashboard" /></div>
       <PageHeader title="Documents" subtitle="Create, organise and export your documents.">
         <button className="btn secondary" onClick={() => router.push("/batch")}><Icon name="exports" size={16} /> Import</button>
@@ -69,12 +103,7 @@ export default function DocumentsPage() {
       {selected.length > 0 ? (
         <div className="row" style={{ marginBottom: 10 }}>
           <span className="secondary">{selected.length} selected</span>
-          <button className="btn danger small" onClick={async () => {
-            await api.bulkDeleteDocuments(selected);
-            setSelected([]);
-            toast("Documents deleted", "success");
-            load();
-          }}>Delete</button>
+          <button className="btn danger small" type="button" onClick={() => { void removeSelected(); }}>Delete</button>
         </div>
       ) : null}
       {rows.length === 0 ? (
@@ -97,12 +126,18 @@ export default function DocumentsPage() {
                   <td><Badge value={row.status} /></td>
                   <td>{row.export_format}</td>
                   <td>{formatDate(row.modified)}</td>
-                  <td>
-                    <button className="btn ghost small" onClick={async () => {
-                      const copy = await api.duplicateDocument(row.id);
-                      toast("Document duplicated", "success");
-                      router.push(`/documents/${copy.id}`);
-                    }}>Duplicate</button>
+                  <td className="row-actions">
+                    <div className="row">
+                      <button className="btn ghost small" type="button" onClick={async () => {
+                        const copy = await api.duplicateDocument(row.id);
+                        toast("Document duplicated", "success");
+                        router.push(`/documents/${copy.id}`);
+                      }}>Duplicate</button>
+                      <button className="btn danger small" type="button" aria-label={`Delete ${row.name}`} onClick={() => { void removeDocument(row); }}>
+                        <Icon name="trash" size={14} />
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

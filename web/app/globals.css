@@ -425,6 +425,20 @@ p {
   border-color: transparent;
 }
 
+.btn.danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+}
+
+.btn.danger.solid {
+  background: #b42318;
+  color: #fff;
+  border-color: transparent;
+}
+
+.btn.danger.solid:hover:not(:disabled) {
+  background: #912018;
+}
+
 .btn:disabled {
   opacity: 0.45;
   cursor: default;
@@ -671,6 +685,47 @@ tbody tr:hover {
   width: 100%;
 }
 
+.profile-card {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.profile-open {
+  display: block;
+  width: 100%;
+  flex: 1;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 18px 20px 14px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.profile-open:hover {
+  background: var(--surface-alt);
+}
+
+.profile-open:focus-visible,
+.profile-actions .btn:focus-visible,
+.confirm-dialog .btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.confirm-dialog .btn:focus-visible {
+  outline-offset: 2px;
+}
+
+.profile-actions {
+  display: flex;
+  justify-content: flex-end;
+  padding: 8px 12px;
+  border-top: 1px solid var(--divider);
+}
+
 .paper-mini {
   background: var(--paper);
   border: 1px solid var(--border);
@@ -840,6 +895,48 @@ tbody tr:hover {
   overflow: auto;
   min-height: 0;
   padding-right: 4px;
+}
+
+.modal-back.confirm-back {
+  background: rgba(17, 20, 24, 0.22);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.modal.confirm-dialog {
+  width: min(420px, 100%);
+  border-top-left-radius: 10px;
+  border-top-right-radius: 10px;
+  border-bottom-right-radius: 10px;
+  border-bottom-left-radius: 10px;
+}
+
+.row-actions {
+  white-space: nowrap;
+  text-align: right;
+}
+
+.row-actions .row {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+.confirm-dialog .secondary {
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  justify-content: flex-end;
+  margin-top: 18px;
+  flex: none;
+}
+
+.confirm-error {
+  margin-top: 12px;
+  padding: 8px 10px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  line-height: 1.45;
 }
 
 .toasts {

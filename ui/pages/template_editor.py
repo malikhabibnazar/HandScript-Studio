@@ -461,6 +461,15 @@ class TemplateEditorPage(QWidget):
     def _delete_selected(self) -> None:
         if not self._selected:
             return
+        name = self._selected.name or "This element"
+        if not confirm(
+            self,
+            "Delete element?",
+            f"“{name}” will be removed from this template.",
+            confirm_text="Delete",
+            destructive=True,
+        ):
+            return
         self._elements.remove(self._selected)
         self._selected = None
         self._canvas.set_elements(self._elements)

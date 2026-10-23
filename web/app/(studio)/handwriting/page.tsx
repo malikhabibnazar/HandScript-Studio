@@ -2,13 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { BackLink, Badge, Empty, Modal, PageHeader, useToast } from "@/components/ui";
+import { BackLink, Badge, Empty, Modal, PageHeader, useConfirm, useToast } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { api } from "@/lib/api";
-import type { HandwritingEngineName, HandwritingStatus, Profile } from "@/lib/types";
-
-type ProfileSource = "image" | "draw";
-import { ENGINE_LABEL, RendererPicker } from "@/components/renderer-choice";
+import type { Profile } from "@/lib/types";
+import { ENGINE_LABEL } from "@/components/renderer-choice";
 
 export default function HandwritingPage() {
   const router = useRouter();
@@ -16,74 +14,87 @@ export default function HandwritingPage() {
   const [rows, setRows] = useState<Profile[] | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [source, setSource] = useState<ProfileSource>("image");
-  const [engine, setEngine] = useState<HandwritingEngineName>("pillow");
-  const [face, setFace] = useState<"caveat" | "homemade" | "patrick" | "kalam" | "sacramento" | "architects">("caveat");
-  const [status, setStatus] = useState<HandwritingStatus | null>(null);
+  const [creating, setCreating] = useState(false);
+  const { confirm, dialog } = useConfirm();
 
   function load() {
     api.profiles().then(setRows).catch((err: Error) => toast(err.message, "danger"));
   }
   useEffect(() => {
     load();
-    api.handwritingStatus().then(setStatus).catch(() => setStatus(null));
   }, []);
+
+  async function remove(item: Profile) {
+    const deleted = await confirm({
+      title: "Delete profile?",
+      message: `"${item.name}" and its samples will be permanently removed. This cannot be undone.`,
+      confirmLabel: "Delete profile",
+      action: () => api.deleteProfile(item.id),
+    });
+    if (!deleted) return;
+    toast("Profile deleted", "success");
+    setRows((current) => current?.filter((row) => row.id !== item.id) ?? current);
+  }
+
   if (!rows) return <><div className="page-back"><BackLink href="/dashboard" /></div><div className="loading">Loading profiles…</div></>;
 
   return (
     <>
+      {dialog}
       <div className="page-back"><BackLink href="/dashboard" /></div>
-      <PageHeader title="Handwriting" subtitle="Image profiles use an uploaded sample. Draw profiles place each letter on its own.">
+      <PageHeader title="Handwriting" subtitle="Profiles are made from a handwriting photo with HandFonted.">
         <button className="btn primary" onClick={() => setOpen(true)}><Icon name="plus" size={16} /> New Profile</button>
       </PageHeader>
-      {rows.length === 0 ? <Empty title="No profiles" body="Create an image profile, or draw each letter in a print style." /> : (
+      {rows.length === 0 ? <Empty title="No profiles" body="Create a profile, then upload a photo of the alphabet." /> : (
         <div className="cards">
           {rows.map((item) => (
-            <button key={item.id} className="card preview-card" onClick={() => router.push(`/handwriting/${item.id}`)}>
-              <p className="hand">{item.preview_text}</p>
-              <div className="row" style={{ justifyContent: "space-between", marginTop: 12 }}>
-                <strong>{item.name}</strong>
-                <Badge value={item.status} />
+            <article key={item.id} className="card profile-card">
+              <button type="button" className="profile-open" onClick={() => router.push(`/handwriting/${item.id}`)}>
+                <p className="hand">{item.preview_text}</p>
+                <div className="row" style={{ justifyContent: "space-between", marginTop: 12 }}>
+                  <strong>{item.name}</strong>
+                  <Badge value={item.status} />
+                </div>
+                {item.is_default ? <p className="muted">Default profile</p> : null}
+                <p className="muted" style={{ marginTop: 6 }}>{item.style?.engine === "drawn" ? "Drawn letters" : `${item.sample_count} samples · ${ENGINE_LABEL[item.style?.engine ?? "graves"]}`}</p>
+                <p className="secondary" style={{ marginTop: 8 }}>{item.description}</p>
+              </button>
+              <div className="profile-actions">
+                <button type="button" className="btn danger small" aria-label={`Delete ${item.name}`} onClick={() => { void remove(item); }}>
+                  <Icon name="trash" size={14} />
+                  Delete
+                </button>
               </div>
-              {item.is_default ? <p className="muted">Default profile</p> : null}
-              <p className="muted" style={{ marginTop: 6 }}>{item.style?.engine === "drawn" ? "Drawn letters" : `${item.sample_count} samples · ${ENGINE_LABEL[item.style?.engine ?? "graves"]}`}</p>
-              <p className="secondary" style={{ marginTop: 8 }}>{item.description}</p>
-            </button>
+            </article>
           ))}
         </div>
       )}
       {open ? (
         <Modal title="New handwriting profile" onClose={() => setOpen(false)}>
           <div className="stack" style={{ marginTop: 14 }}>
-            <div className="field"><label>Name</label><input value={name} onChange={(event) => setName(event.target.value)} /></div>
-            <div className="field"><label>Description</label><textarea value={description} onChange={(event) => setDescription(event.target.value)} /></div>
             <div className="field">
-              <label>How should this profile be made?</label>
-              <div className="stack">
-                <button type="button" className={source === "image" ? "option on" : "option"} onClick={() => setSource("image")}>
-                  <span className="radio" />
-                  <span><strong>Image based</strong><br /><span className="secondary">Upload a photo or specimen sheet and pick one of the current renderers.</span></span>
-                </button>
-                <button type="button" className={source === "draw" ? "option on" : "option"} onClick={() => setSource("draw")}>
-                  <span className="radio" />
-                  <span><strong>Draw based</strong><br /><span className="secondary">Draw each letter. The page is built by placing those letters separately, in a print style.</span></span>
-                </button>
+              <label htmlFor="profile-name">Name</label>
+              <input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} />
+            </div>
+            <div className="field">
+              <label>Renderer</label>
+              <div className="option on" aria-disabled="true" style={{ cursor: "default" }}>
+                <span className="radio" />
+                <strong>HandFonted</strong>
               </div>
             </div>
-            {source === "image" ? (
-              <div className="field">
-                <label>Renderer</label>
-                <RendererPicker engine={engine} face={face} status={status} onEngine={setEngine} onFace={setFace} />
-              </div>
-            ) : null}
             <div className="row" style={{ justifyContent: "flex-end" }}>
-              <button className="btn primary" disabled={!name.trim()} onClick={async () => {
-                const created = await api.createProfile(source === "draw"
-                  ? { name, description, engine: "drawn" }
-                  : { name, description, engine, font_family: face });
-                router.push(`/handwriting/${created.id}`);
-              }}>Create</button>
+              <button className="btn ghost" disabled={creating} onClick={() => setOpen(false)}>Cancel</button>
+              <button className="btn primary" disabled={!name.trim() || creating} onClick={async () => {
+                setCreating(true);
+                try {
+                  const created = await api.createProfile({ name: name.trim(), engine: "handfonted" });
+                  router.push(`/handwriting/${created.id}`);
+                } catch (err) {
+                  toast(err instanceof Error ? err.message : "Could not create the profile", "danger");
+                  setCreating(false);
+                }
+              }}>{creating ? "Creating…" : "Create"}</button>
             </div>
           </div>
         </Modal>

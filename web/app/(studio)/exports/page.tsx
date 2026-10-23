@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Empty, PageHeader, useToast } from "@/components/ui";
-import { api, downloadExport } from "@/lib/api";
+import { Badge, Empty, PageHeader, useConfirm, useToast } from "@/components/ui";
+import { api, downloadExport, printExport } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import type { ExportRecord } from "@/lib/types";
 
@@ -10,16 +10,32 @@ export default function ExportsPage() {
   const toast = useToast();
   const [rows, setRows] = useState<ExportRecord[] | null>(null);
   const [status, setStatus] = useState("");
+  const [printingId, setPrintingId] = useState("");
+  const { confirm, dialog } = useConfirm();
 
   function load() {
     api.exports().then(setRows).catch((err: Error) => toast(err.message, "danger"));
   }
   useEffect(() => { load(); }, []);
+  async function removeExport(row: ExportRecord) {
+    const label = row.filename || row.batch_name;
+    const deleted = await confirm({
+      title: "Delete export?",
+      message: `"${label}" and its files will be permanently removed. This cannot be undone.`,
+      confirmLabel: "Delete export",
+      action: () => api.deleteExport(row.id),
+    });
+    if (!deleted) return;
+    toast("Export removed", "success");
+    load();
+  }
+
   if (!rows) return <div className="loading">Loading exports…</div>;
   const visible = status ? rows.filter((row) => row.status === status) : rows;
 
   return (
     <>
+      {dialog}
       <PageHeader title="Exports" subtitle="Files produced by batch generation." />
       <div className="filters">
         {["", "Completed", "Partial", "Failed"].map((item) => (
@@ -42,11 +58,17 @@ export default function ExportsPage() {
                   <td>{row.size_mb.toFixed(1)} MB</td>
                   <td className="row">
                     <button className="btn ghost small" disabled={!row.has_file} onClick={() => downloadExport(row.id)}>Download</button>
-                    <button className="btn danger small" onClick={async () => {
-                      await api.deleteExport(row.id);
-                      toast("Export removed", "success");
-                      load();
-                    }}>Delete</button>
+                    <button className="btn ghost small" disabled={!row.has_file || printingId === row.id} onClick={async () => {
+                      setPrintingId(row.id);
+                      try {
+                        await printExport(row.id, row.filename);
+                      } catch (err) {
+                        toast(err instanceof Error ? err.message : "Could not print", "danger");
+                      } finally {
+                        setPrintingId("");
+                      }
+                    }}>{printingId === row.id ? "Printing…" : "Print"}</button>
+                    <button className="btn danger small" type="button" onClick={() => { void removeExport(row); }}>Delete</button>
                   </td>
                 </tr>
               ))}

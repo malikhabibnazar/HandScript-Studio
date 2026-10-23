@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, glyphImageUrl } from "@/lib/api";
 import type { GlyphInventory, GlyphSetName, Profile, ProfileStyle } from "@/lib/types";
-import { useToast } from "@/components/ui";
+import { useConfirm, useToast } from "@/components/ui";
 import { CharacterGrid } from "./character-grid";
 import { DrawPad, type InkExport } from "./pad";
 import { LivePreview } from "./live-preview";
@@ -25,6 +25,7 @@ export function DrawStudio({
   onStyle: (style: ProfileStyle) => void;
 }) {
   const toast = useToast();
+  const { confirm, dialog } = useConfirm();
   const [inventory, setInventory] = useState<GlyphInventory | null>(null);
   const [setName, setSetName] = useState<GlyphSetName>("set1");
   const [selectedKey, setSelectedKey] = useState("");
@@ -82,8 +83,41 @@ export function DrawStudio({
     await refresh(next, `Saved ${selected.char}`);
   }
 
+  async function clearSet() {
+    let next: GlyphInventory | null = null;
+    const cleared = await confirm({
+      title: "Clear sample set?",
+      message: "Every drawn letter in both sets will be permanently removed. This cannot be undone.",
+      confirmLabel: "Clear sample set",
+      action: async () => {
+        next = await api.clearGlyphs(profile.id);
+      },
+    });
+    if (!cleared || !next) return;
+    await refresh(next, "Sample set cleared").catch((err: Error) => toast(err.message, "danger"));
+  }
+
+  async function removeLetter() {
+    if (!selected) return;
+    const setLabel = setName === "set1" ? "Set 1" : "Set 2";
+    const letter = selected;
+    let next: GlyphInventory | null = null;
+    const removed = await confirm({
+      title: "Delete this letter?",
+      message: `The drawing for "${letter.char}" in ${setLabel} will be permanently removed.`,
+      confirmLabel: "Delete letter",
+      action: async () => {
+        next = await api.deleteGlyph(profile.id, setName, letter.key);
+      },
+    });
+    if (!removed || !next) return;
+    await refresh(next, `Removed ${letter.char}`).catch((err: Error) => toast(err.message, "danger"));
+  }
+
   return (
-    <div className="draw-studio">
+    <>
+      {dialog}
+      <div className="draw-studio">
       <div className="stack">
         <section className="card">
           <div className="row" style={{ justifyContent: "space-between", gap: 12 }}>
@@ -95,9 +129,7 @@ export function DrawStudio({
               <button type="button" className="btn secondary" onClick={() => {
                 api.restoreGlyphs(profile.id).then((next) => refresh(next, "Sample set restored")).catch((err: Error) => toast(err.message, "danger"));
               }}>Restore sample set</button>
-              <button type="button" className="btn secondary" onClick={() => {
-                api.clearGlyphs(profile.id).then((next) => refresh(next, "Sample set cleared")).catch((err: Error) => toast(err.message, "danger"));
-              }}>Clear sample set</button>
+              <button type="button" className="btn secondary" onClick={() => { void clearSet(); }}>Clear sample set</button>
             </div>
           </div>
           <div className="row" style={{ marginTop: 12 }}>
@@ -133,9 +165,7 @@ export function DrawStudio({
                 {saved ? (
                   <>
                     <img className="saved-glyph" src={glyphImageUrl(profile.id, setName, selected.key, stamp)} alt={`Saved ${selected.char}`} />
-                    <button type="button" className="btn secondary" onClick={() => {
-                      api.deleteGlyph(profile.id, setName, selected.key).then((next) => refresh(next, `Removed ${selected.char}`)).catch((err: Error) => toast(err.message, "danger"));
-                    }}>Delete this letter</button>
+                    <button type="button" className="btn secondary" onClick={() => { void removeLetter(); }}>Delete this letter</button>
                   </>
                 ) : <p className="secondary">Not drawn in this set yet.</p>}
               </div>
@@ -150,5 +180,6 @@ export function DrawStudio({
       </div>
       <LivePreview profileId={profile.id} text={text} revision={revision} onText={setText} />
     </div>
+    </>
   );
 }

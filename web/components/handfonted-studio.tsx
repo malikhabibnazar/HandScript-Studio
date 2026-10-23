@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Badge, useToast } from "@/components/ui";
+import { Badge, useConfirm, useToast } from "@/components/ui";
 import { API_URL, api } from "@/lib/api";
 import type { HandfontedGlyph, Profile } from "@/lib/types";
 
@@ -17,6 +17,7 @@ export function HandfontedStudio({
 }) {
   const router = useRouter();
   const toast = useToast();
+  const { confirm, dialog } = useConfirm();
   const [name, setName] = useState(profile.name);
   const [thickness, setThickness] = useState(profile.style?.thickness ?? 100);
   const [glyphs, setGlyphs] = useState<HandfontedGlyph[]>(profile.style?.glyphs ?? []);
@@ -106,8 +107,21 @@ export function HandfontedStudio({
     );
   }
 
+  async function removeProfile() {
+    const deleted = await confirm({
+      title: "Delete profile?",
+      message: `"${profile.name}" and its samples will be permanently removed. This cannot be undone.`,
+      confirmLabel: "Delete profile",
+      action: () => api.deleteProfile(profile.id),
+    });
+    if (!deleted) return;
+    toast("Profile deleted", "success");
+    router.push("/handwriting");
+  }
+
   return (
     <>
+      {dialog}
       <div className="row" style={{ marginBottom: 16, justifyContent: "space-between" }}>
         <div>
           <button className="btn ghost" onClick={() => router.push("/handwriting")}>Handwriting</button>
@@ -116,14 +130,7 @@ export function HandfontedStudio({
         </div>
         <div className="row">
           <Badge value={profile.status} />
-          <button className="btn danger" onClick={async () => {
-            try {
-              await api.deleteProfile(profile.id);
-              router.push("/handwriting");
-            } catch (err) {
-              toast(err instanceof Error ? err.message : "Could not delete", "danger");
-            }
-          }}>Delete</button>
+          <button className="btn danger" type="button" onClick={() => { void removeProfile(); }}>Delete</button>
         </div>
       </div>
 

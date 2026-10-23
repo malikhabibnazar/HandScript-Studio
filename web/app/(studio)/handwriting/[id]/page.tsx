@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { BackLink, Badge, useToast } from "@/components/ui";
+import { BackLink, Badge, useConfirm, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
 import { RendererPicker } from "@/components/renderer-choice";
@@ -43,6 +43,7 @@ export default function HandwritingDetailPage() {
   const [text, setText] = useState("");
   const [style, setStyle] = useState<ProfileStyle>(DEFAULT_STYLE);
   const [engine, setEngine] = useState<HandwritingStatus | null>(null);
+  const { confirm, dialog } = useConfirm();
 
   function load() {
     api.profile(params.id).then((next) => {
@@ -62,6 +63,19 @@ export default function HandwritingDetailPage() {
     return () => clearInterval(timer);
   }, [profile?.status]);
 
+  async function removeProfile() {
+    if (!profile) return;
+    const deleted = await confirm({
+      title: "Delete profile?",
+      message: `"${profile.name}" and its samples will be permanently removed. This cannot be undone.`,
+      confirmLabel: "Delete profile",
+      action: () => api.deleteProfile(profile.id),
+    });
+    if (!deleted) return;
+    toast("Profile deleted", "success");
+    router.push("/handwriting");
+  }
+
   if (!profile) return <><div className="page-back"><BackLink href="/handwriting" /></div><div className="loading">Loading profile…</div></>;
   if (profile.style?.engine === "handfonted") {
     return <HandfontedStudio profile={profile} onProfile={setProfile} />;
@@ -80,6 +94,7 @@ export default function HandwritingDetailPage() {
 
   return (
     <>
+      {dialog}
       <div className="row" style={{ marginBottom: 16, justifyContent: "space-between" }}>
         <div>
           <BackLink href="/handwriting" />
@@ -93,12 +108,7 @@ export default function HandwritingDetailPage() {
             try { setProfile(await api.analyzeProfile(profile.id)); toast("Analysis started", "info"); }
             catch (err) { toast(err instanceof Error ? err.message : "Could not analyse", "danger"); }
           }}>Run analysis</button>}
-          <button className="btn danger" onClick={async () => {
-            try {
-              await api.deleteProfile(profile.id);
-              router.push("/handwriting");
-            } catch (err) { toast(err instanceof Error ? err.message : "Could not delete", "danger"); }
-          }}>Delete</button>
+          <button className="btn danger" type="button" onClick={() => { void removeProfile(); }}>Delete</button>
         </div>
       </div>
       {drawn ? <DrawStudio profile={current} style={style} onProfile={setProfile} onStyle={setStyle} /> : <>

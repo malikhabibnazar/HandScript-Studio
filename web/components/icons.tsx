@@ -13,6 +13,7 @@ const paths: Record<string, ReactNode> = {
   moon: <><path d="M20 14.5A8 8 0 1 1 9.5 4 6.5 6.5 0 0 0 20 14.5z" /></>,
   sidebar: <><rect x="3" y="4" width="18" height="16" /><path d="M9 4v16" /></>,
   back: <><path d="M15 5 8 12l7 7" /><path d="M9 12h11" /></>,
+  trash: <><path d="M4 7h16" /><path d="M9 7V5h6v2" /><path d="M7 7l1 13h8l1-13" /><path d="M10 11v6M14 11v6" /></>,
 };
 
 export function Icon({ name, size = 18 }: { name: string; size?: number }) {
