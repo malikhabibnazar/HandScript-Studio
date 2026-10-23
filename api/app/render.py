@@ -58,6 +58,8 @@ def render_page(
     word_spacing_px: float = 15,
     char_spacing_px: float = -2.5,
     ink_color: str | None = None,
+    handfonted_glyphs: list[dict] | None = None,
+    handfonted_dir: str | None = None,
 ) -> Image.Image:
     width = max(1, int(round(float(template["width_in"]) * dpi)))
     height = max(1, int(round(float(template["height_in"]) * dpi)))
@@ -65,7 +67,13 @@ def render_page(
     writer = get_handwriting_engine(engine, font_path=font_path, font_family=font_family)
     sample_ctx = nullcontext()
     engine_norm = (engine or "").strip().lower()
-    if engine_norm in {"gemini", "onedm"}:
+    if engine_norm == "handfonted" and handfonted_glyphs and handfonted_dir:
+        from pathlib import Path
+
+        from app.handwriting.handfonted_draw import use_glyphs
+
+        sample_ctx = use_glyphs(Path(handfonted_dir), handfonted_glyphs)
+    elif engine_norm in {"gemini", "onedm"}:
         if engine_norm == "gemini":
             from app.handwriting.gemini_engine import use_samples
         else:

@@ -17,7 +17,17 @@ export type Analysis = {
   notes: string[];
 };
 
-export type HandwritingEngineName = "graves" | "handwrite" | "pillow" | "hw2font" | "fontmaker" | "gemini" | "onedm" | "drawn";
+export type HandwritingEngineName = "graves" | "handwrite" | "pillow" | "hw2font" | "fontmaker" | "gemini" | "onedm" | "drawn" | "drawfont" | "handfonted";
+
+export type HandfontedGlyph = {
+  id: string;
+  label: string;
+  confidence: number;
+  kept: boolean;
+  sample?: number;
+};
+
+export type DrawfontCapture = "minimal" | "spanish" | "freeform";
 
 export type PillowFace = "caveat" | "homemade" | "patrick" | "kalam" | "sacramento" | "architects";
 
@@ -33,6 +43,14 @@ export type ProfileStyle = {
   word_spacing_px: number;
   char_spacing_px: number;
   ink_color: string | null;
+  web_font_path?: string | null;
+  capture: DrawfontCapture;
+  chars: string;
+  smooth: number;
+  weight: number;
+  font_error?: string | null;
+  thickness: number;
+  glyphs: HandfontedGlyph[];
 };
 
 export type GlyphSetName = "set1" | "set2";
@@ -103,6 +121,14 @@ export type OneDMStatus = {
   message: string;
 };
 
+export type DrawfontStatus = {
+  node: boolean;
+  node_version: string | null;
+  npx: boolean;
+  ready: boolean;
+  charsets: string[];
+};
+
 export type HandwritingStatus = {
   requested: string;
   active: string;
@@ -115,6 +141,8 @@ export type HandwritingStatus = {
   sheets?: SheetStatus;
   gemini?: { configured: boolean; model: string };
   onedm?: OneDMStatus;
+  drawfont?: DrawfontStatus;
+  handfonted?: { ready: boolean; url: string; message: string };
 };
 
 export type Profile = {

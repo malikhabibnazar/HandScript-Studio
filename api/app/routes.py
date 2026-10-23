@@ -44,6 +44,8 @@ from app.schemas import (
     ProfileCreate,
     ProfileOut,
     ProfileUpdate,
+    HandfontedGlyphUpdate,
+    HandfontedPreview,
     SettingsOut,
     SettingsUpdate,
     TemplateCreate,
@@ -106,6 +108,19 @@ def handwriting_status() -> dict:
 
 @router.get("/handwriting/templates/{name}")
 def handwriting_template(name: str) -> Response:
+    draw_charset = {"drawfont-minimal.pdf": "minimal", "drawfont-spanish.pdf": "spanish"}.get(name)
+    if draw_charset:
+        from app.handwriting.drawfont_engine import template_pdf as draw_template
+
+        try:
+            data = draw_template(draw_charset)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"Template could not be built ({exc})") from exc
+        return Response(
+            content=data,
+            media_type="application/pdf",
+            headers={"Content-Disposition": f'attachment; filename="{name}"'},
+        )
     from app.handwriting.sheet_engine import template_pdf
 
     kind = {"hw2font.pdf": "hw2font", "fontmaker.pdf": "fontmaker"}.get(name)
@@ -158,6 +173,12 @@ def _style_dict(engine: str, font_family: str) -> dict:
         "word_spacing_px": 15,
         "char_spacing_px": -2.5,
         "ink_color": None,
+        "capture": "minimal",
+        "chars": "",
+        "smooth": 1,
+        "weight": 0,
+        "thickness": 100,
+        "glyphs": [],
     }
 
 
@@ -274,7 +295,7 @@ async def add_sample(profile_id: str, file: UploadFile = File(...), db: Session 
         "characters": max(20, min(90, len(raw) // 800)),
     })
     profile.samples = samples
-    if isinstance(profile.style, dict) and profile.style.get("engine") in {"handwrite", "hw2font", "fontmaker"}:
+    if isinstance(profile.style, dict) and profile.style.get("engine") in {"handwrite", "hw2font", "fontmaker", "drawfont"}:
         from app.handwriting.handwrite_engine import attach_personal_font
 
         profile.style = attach_personal_font(profile.id, samples, profile.style, get_storage().get)
@@ -283,6 +304,179 @@ async def add_sample(profile_id: str, file: UploadFile = File(...), db: Session 
     db.commit()
     db.refresh(profile)
     return profile
+
+
+def _handfonted_profile(db: Session, profile_id: str) -> Profile:
+    profile = _one(db, Profile, profile_id)
+    style = profile.style if isinstance(profile.style, dict) else {}
+    if str(style.get("engine") or "").lower() != "handfonted":
+        raise HTTPException(status_code=400, detail="This profile is not using HandFonted")
+    return profile
+
+
+def _glyph_dir(profile_id: str):
+    from pathlib import Path
+
+    from app.config import get_settings
+
+    return Path(get_settings().storage_dir) / "handfonted" / profile_id / "glyphs"
+
+
+@router.post("/profiles/{profile_id}/handfonted/process", response_model=ProfileOut)
+async def process_handfonted(profile_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)) -> Profile:
+    profile = _handfonted_profile(db, profile_id)
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    from app.handwriting.handfonted_client import HandfontedError, process_image
+
+    style = dict(profile.style or {})
+    existing = [item for item in list(style.get("glyphs") or []) if isinstance(item, dict)]
+    used = [int(item.get("sample") or 1) for item in existing]
+    sample_no = (max(used) if used else 0) + 1
+    if sample_no > 4:
+        raise HTTPException(status_code=400, detail="This profile already has 4 samples.")
+    try:
+        found = process_image(raw, file.filename or "handwriting.png")
+    except HandfontedError as exc:
+        text = str(exc)
+        status = 503 if "not running" in text or "loading" in text else 422
+        raise HTTPException(status_code=status, detail=text) from exc
+    folder = _glyph_dir(profile.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    glyphs = list(existing)
+    for item in found:
+        glyph_id = new_id("gl")
+        (folder / f"{glyph_id}.png").write_bytes(item["png"])
+        glyphs.append({
+            "id": glyph_id,
+            "label": item["label"],
+            "confidence": item["confidence"],
+            "kept": True,
+            "sample": sample_no,
+        })
+    style["glyphs"] = glyphs
+    style["font_error"] = None
+    profile.style = style
+    profile.status = "Needs Review"
+    samples = list(profile.samples or [])
+    samples.append({
+        "id": new_id("sm"),
+        "filename": file.filename or "handwriting.png",
+        "added": utcnow().isoformat(),
+        "quality": 80,
+        "characters": len(found),
+    })
+    profile.samples = samples
+    log_activity(db, "document", profile.name, f"HandFonted read sample {sample_no}")
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.get("/profiles/{profile_id}/handfonted/glyphs/{glyph_id}")
+def handfonted_glyph(profile_id: str, glyph_id: str, db: Session = Depends(get_db)) -> Response:
+    _handfonted_profile(db, profile_id)
+    path = _glyph_dir(profile_id) / f"{glyph_id}.png"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Letter not found")
+    return Response(content=path.read_bytes(), media_type="image/png")
+
+
+@router.put("/profiles/{profile_id}/handfonted/glyphs", response_model=ProfileOut)
+def save_handfonted_glyphs(profile_id: str, body: HandfontedGlyphUpdate, db: Session = Depends(get_db)) -> Profile:
+    profile = _handfonted_profile(db, profile_id)
+    style = dict(profile.style or {})
+    known = {item.get("id") for item in style.get("glyphs") or [] if isinstance(item, dict)}
+    glyphs = []
+    for item in body.glyphs:
+        if item.id not in known:
+            continue
+        glyphs.append(item.model_dump())
+    style["glyphs"] = glyphs
+    if body.thickness is not None:
+        style["thickness"] = body.thickness
+    profile.style = style
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.post("/profiles/{profile_id}/handfonted/generate", response_model=ProfileOut)
+def generate_handfonted(profile_id: str, body: HandfontedGlyphUpdate, db: Session = Depends(get_db)) -> Profile:
+    profile = _handfonted_profile(db, profile_id)
+    style = dict(profile.style or {})
+    known = {item.get("id"): item for item in style.get("glyphs") or [] if isinstance(item, dict)}
+    folder = _glyph_dir(profile.id)
+    chosen = []
+    stored = []
+    seen: set[str] = set()
+    for item in body.glyphs:
+        if item.id not in known:
+            continue
+        stored.append(item.model_dump())
+        if not item.kept:
+            continue
+        label = item.label
+        if len(label) != 1 or label in seen or not (folder / f"{item.id}.png").is_file():
+            continue
+        seen.add(label)
+        chosen.append({"label": label, "png": (folder / f"{item.id}.png").read_bytes()})
+    if not chosen:
+        raise HTTPException(status_code=400, detail="Keep at least one character before generating the font.")
+    from pathlib import Path
+
+    from app.config import get_settings
+    from app.handwriting.handfonted_client import HandfontedError, build_font
+
+    thickness = body.thickness if body.thickness is not None else int(style.get("thickness") or 100)
+    dest = Path(get_settings().storage_dir) / "handfonted" / f"{profile.id}.ttf"
+    try:
+        build_font(chosen, dest, font_name=profile.name, thickness=thickness)
+    except HandfontedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    style["glyphs"] = stored
+    style["thickness"] = thickness
+    style["font_path"] = str(dest)
+    style["font_error"] = None
+    profile.style = style
+    profile.status = "Ready"
+    log_activity(db, "document", profile.name, "HandFonted built a personal font")
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.post("/profiles/{profile_id}/handfonted/preview")
+def preview_handfonted(profile_id: str, body: HandfontedPreview, db: Session = Depends(get_db)) -> Response:
+    profile = _handfonted_profile(db, profile_id)
+    style = profile.style if isinstance(profile.style, dict) else {}
+    font_path = style.get("font_path") if isinstance(style.get("font_path"), str) else None
+    glyphs = [item for item in list(style.get("glyphs") or []) if isinstance(item, dict)]
+    if not glyphs and not font_path:
+        raise HTTPException(status_code=400, detail="Upload a sample before previewing text.")
+    from app.handwriting.factory import get_handwriting_engine
+    from app.handwriting.handfonted_draw import use_glyphs
+
+    text = (body.text or "").strip() or "The quick brown fox"
+    with use_glyphs(_glyph_dir(profile.id), glyphs):
+        image = get_handwriting_engine("handfonted", font_path=font_path).render_wrapped(
+            text,
+            max_width_px=920,
+            max_height_px=320,
+            style_id=None,
+            bias=0.75,
+            variation=0.15,
+            font_size_pt=32,
+            dpi=144,
+            seed=stable_seed(profile.id, text),
+            line_gap_px=10,
+        )
+    profile.preview_text = text
+    db.commit()
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return Response(content=buffer.getvalue(), media_type="image/png")
 
 
 @router.post("/profiles/{profile_id}/analyze", response_model=ProfileOut)

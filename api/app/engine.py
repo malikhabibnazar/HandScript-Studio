@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import io
 import zipfile
+from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import select
@@ -58,7 +59,7 @@ def profile_ink(profile: Profile | None) -> dict:
         "variation": float(raw.get("variation", 0.15)),
     }
     engine = str(raw.get("engine") or "").strip().lower()
-    if engine in {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm", "drawn"}:
+    if engine in {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm", "drawn", "drawfont", "handfonted"}:
         ink["engine"] = engine
     if engine == "drawn" and profile is not None:
         ink["glyph_profile_id"] = profile.id
@@ -76,8 +77,13 @@ def profile_ink(profile: Profile | None) -> dict:
     if engine == "pillow":
         ink["font_family"] = str(raw.get("font_family") or "caveat")
     font_path = raw.get("font_path")
-    if engine in {"handwrite", "hw2font", "fontmaker"} and isinstance(font_path, str) and font_path:
+    if engine in {"handwrite", "hw2font", "fontmaker", "drawfont", "handfonted"} and isinstance(font_path, str) and font_path:
         ink["font_path"] = font_path
+    if engine == "handfonted" and profile is not None:
+        glyphs = [item for item in list(raw.get("glyphs") or []) if isinstance(item, dict) and item.get("kept", True)]
+        if glyphs:
+            ink["handfonted_glyphs"] = glyphs
+            ink["handfonted_dir"] = str(Path(settings.storage_dir) / "handfonted" / profile.id / "glyphs")
     return ink
 
 

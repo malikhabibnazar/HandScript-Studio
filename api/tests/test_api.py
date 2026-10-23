@@ -480,3 +480,184 @@ def test_drawn_letters_stay_separate_and_image_profiles_still_upload() -> None:
         assert download.status_code == 200
         assert download.content.startswith(b"%PDF")
         assert "Print batch.pdf" in download.headers["content-disposition"]
+
+
+def test_drawfont_renders_and_builds_without_calling_npx(monkeypatch) -> None:
+    import io
+
+    from PIL import Image
+
+    from app.handwriting.drawfont_engine import convert_photos
+    from app.handwriting.factory import get_handwriting_engine
+    from app.render import render_png
+
+    page = render_png(
+        {"width_in": 4, "height_in": 2},
+        [{
+            "id": "body", "type": "Text", "name": "Body", "x": 0.2, "y": 0.3,
+            "width": 3.4, "height": 1.2, "font_size": 28,
+            "content": "Thank you", "visible": True,
+        }],
+        {},
+        dpi=72, seed=1, engine="drawfont",
+    )
+    assert Image.open(io.BytesIO(page)).size == (288, 144)
+    assert get_handwriting_engine("drawfont").name == "drawfont"
+
+    monkeypatch.setattr(
+        "app.handwriting.drawfont_engine.drawfont_status",
+        lambda: {"ready": True, "node": True, "npx": True, "node_version": "v22.0.0", "charsets": ["minimal", "spanish"]},
+    )
+    calls = {"n": 0}
+
+    def fake_run(args: list[str], cwd: Path) -> None:
+        calls["n"] += 1
+        calls["args"] = args
+        out = Path(args[args.index("-o") + 1])
+        out.with_suffix(".ttf").write_bytes(b"T" * 80)
+        out.with_suffix(".woff2").write_bytes(b"W" * 40)
+
+    monkeypatch.setattr("app.handwriting.drawfont_engine._run", fake_run)
+    missing = convert_photos([("a.png", b"\x89PNG")], _tmp / "missing.ttf", capture="freeform", chars="  ", smooth=1, weight=0)
+    assert missing and "order" in missing
+    assert calls["n"] == 0
+
+    dest = _tmp / "built.ttf"
+    built = convert_photos([("page.jpg", b"\xff\xd8\xff\x00")], dest, capture="spanish", chars="", smooth=1, weight=-1)
+    assert built is None
+    assert dest.read_bytes() == b"T" * 80
+    assert dest.with_suffix(".woff2").read_bytes() == b"W" * 40
+    assert calls["args"][0] == "make"
+    assert calls["args"][calls["args"].index("--charset") + 1] == "spanish"
+    assert "ttf,woff2" in calls["args"]
+    assert "--weight=-1" in calls["args"]
+
+    def fake_convert(images, dest_font, *, capture, chars, smooth, weight):
+        assert capture == "freeform"
+        assert chars == "Hello"
+        assert len(images) == 1
+        dest_font.parent.mkdir(parents=True, exist_ok=True)
+        dest_font.write_bytes(b"F" * 90)
+        dest_font.with_suffix(".woff2").write_bytes(b"W" * 50)
+        return None
+
+    monkeypatch.setattr("app.handwriting.drawfont_engine.convert_photos", fake_convert)
+    monkeypatch.setattr("app.handwriting.drawfont_engine.template_pdf", lambda charset: b"%PDF-" + charset.encode())
+    with TestClient(app) as client:
+        created = client.post("/api/profiles", json={"name": "Photo hand", "engine": "drawfont"})
+        assert created.status_code == 201
+        body = created.json()
+        assert body["style"]["engine"] == "drawfont"
+        assert body["style"]["capture"] == "minimal"
+        profile_id = body["id"]
+        patched = client.patch(f"/api/profiles/{profile_id}", json={"style": {
+            "style_id": 9, "bias": 0.75, "variation": 0.15, "engine": "drawfont",
+            "font_family": "kalam", "capture": "freeform", "chars": "Hello", "smooth": 1.5, "weight": 0,
+        }})
+        assert patched.status_code == 200
+        assert patched.json()["style"]["capture"] == "freeform"
+        uploaded = client.post(
+            f"/api/profiles/{profile_id}/samples",
+            files={"file": ("hand.png", b"\x89PNG\r\n", "image/png")},
+        )
+        assert uploaded.status_code == 200
+        saved = uploaded.json()["style"]
+        assert saved["font_error"] is None
+        assert Path(saved["font_path"]).read_bytes() == b"F" * 90
+        assert Path(saved["web_font_path"]).read_bytes() == b"W" * 50
+        sheet = client.get("/api/handwriting/templates/drawfont-minimal.pdf")
+        assert sheet.status_code == 200
+        assert sheet.content == b"%PDF-minimal"
+        assert client.get("/api/handwriting/templates/missing.pdf").status_code == 404
+        status = client.get("/api/handwriting/status")
+        assert "ready" in status.json()["drawfont"]
+
+
+def test_handfonted_reviews_letters_then_previews_text(monkeypatch) -> None:
+    import io
+
+    from PIL import Image
+
+    from app.handwriting.factory import get_handwriting_engine
+
+    kalam = Path(__file__).resolve().parents[1] / "app" / "handwriting" / "fonts" / "Kalam-Regular.ttf"
+    png = b"\x89PNG\r\n\x1a\n" + b"glyph"
+
+    def fake_process(raw: bytes, filename: str) -> list[dict]:
+        assert raw.startswith(b"\x89PNG")
+        assert filename == "alphabet.png"
+        return [
+            {"label": "A", "confidence": 0.91, "png": png},
+            {"label": "A", "confidence": 0.42, "png": png},
+            {"label": "b", "confidence": 0.8, "png": png},
+        ]
+
+    def fake_build(glyphs: list[dict], dest: Path, *, font_name: str, thickness: int) -> None:
+        assert font_name == "Jane Hand"
+        assert thickness == 80
+        assert [item["label"] for item in glyphs] == ["A", "b"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(kalam.read_bytes())
+
+    monkeypatch.setattr("app.handwriting.handfonted_client.process_image", fake_process)
+    monkeypatch.setattr("app.handwriting.handfonted_client.build_font", fake_build)
+    assert get_handwriting_engine("handfonted").name == "handfonted"
+
+    with TestClient(app) as client:
+        created = client.post("/api/profiles", json={"name": "Jane Hand", "engine": "handfonted"})
+        assert created.status_code == 201
+        profile_id = created.json()["id"]
+        assert created.json()["style"]["engine"] == "handfonted"
+        processed = client.post(
+            f"/api/profiles/{profile_id}/handfonted/process",
+            files={"file": ("alphabet.png", b"\x89PNG\r\nphoto", "image/png")},
+        )
+        assert processed.status_code == 200
+        glyphs = processed.json()["style"]["glyphs"]
+        assert [item["label"] for item in glyphs] == ["A", "A", "b"]
+        assert [item["sample"] for item in glyphs] == [1, 1, 1]
+        image = client.get(f"/api/profiles/{profile_id}/handfonted/glyphs/{glyphs[0]['id']}")
+        assert image.status_code == 200
+        assert image.content == png
+        glyphs[1]["kept"] = False
+        generated = client.post(
+            f"/api/profiles/{profile_id}/handfonted/generate",
+            json={"glyphs": glyphs, "thickness": 80},
+        )
+        assert generated.status_code == 200
+        assert generated.json()["status"] == "Ready"
+        assert Path(generated.json()["style"]["font_path"]).is_file()
+        preview = client.post(
+            f"/api/profiles/{profile_id}/handfonted/preview",
+            json={"text": "Ab"},
+        )
+        assert preview.status_code == 200
+        assert preview.headers["content-type"] == "image/png"
+        assert Image.open(io.BytesIO(preview.content)).size[0] > 0
+
+
+def test_handfonted_keeps_four_samples(monkeypatch) -> None:
+    png = b"\x89PNG\r\n\x1a\n" + b"glyph"
+
+    def fake_process(raw: bytes, filename: str) -> list[dict]:
+        return [{"label": "e", "confidence": 0.9, "png": png}]
+
+    monkeypatch.setattr("app.handwriting.handfonted_client.process_image", fake_process)
+    with TestClient(app) as client:
+        created = client.post("/api/profiles", json={"name": "Four Hands", "engine": "handfonted"})
+        profile_id = created.json()["id"]
+        for index in range(4):
+            processed = client.post(
+                f"/api/profiles/{profile_id}/handfonted/process",
+                files={"file": (f"sample-{index}.png", b"\x89PNG\r\nphoto", "image/png")},
+            )
+            assert processed.status_code == 200
+            glyphs = processed.json()["style"]["glyphs"]
+            assert len(glyphs) == index + 1
+            assert glyphs[-1]["sample"] == index + 1
+        blocked = client.post(
+            f"/api/profiles/{profile_id}/handfonted/process",
+            files={"file": ("sample-5.png", b"\x89PNG\r\nphoto", "image/png")},
+        )
+        assert blocked.status_code == 400
+        assert "4 samples" in blocked.json()["detail"]

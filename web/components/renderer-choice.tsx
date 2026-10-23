@@ -10,6 +10,8 @@ export const ENGINE_LABEL: Record<HandwritingEngineName, string> = {
   handwrite: "Handwrite",
   hw2font: "hw2font",
   fontmaker: "Font maker",
+  drawfont: "Draw your font",
+  handfonted: "HandFonted",
   graves: "Graves AI",
   drawn: "Drawn letters",
 };
@@ -21,6 +23,8 @@ const CHOICES: { id: HandwritingEngineName; title: string; body: string }[] = [
   { id: "handwrite", title: "Handwrite", body: "The handwrite library. A filled sample sheet becomes a personal font when FontForge and Potrace are installed." },
   { id: "hw2font", title: "hw2font", body: "Print the hw2font sheet, scan it, and upload it. Potrace and FontForge build an OpenType font with spacing and alternates." },
   { id: "fontmaker", title: "Font maker", body: "Print the marker sheet and photograph the whole page. Corner markers line the scan up before the font is built." },
+  { id: "drawfont", title: "Draw your font", body: "Free and open source. A photo of your handwriting becomes a TTF and WOFF2 on this machine. Freeform photos and printed templates both work." },
+  { id: "handfonted", title: "HandFonted", body: "Open source. One photo of your alphabet is read in its own service. You check every letter, fix or remove mistakes, then preview the font." },
   { id: "graves", title: "Graves AI", body: "Stroke model. Style, bias and variation change the hand." },
 ];
 
@@ -89,6 +93,26 @@ export function RendererPicker({
           {status?.onedm?.weights_loaded
             ? "One-DM diffusion checkpoint is loaded. Upload a single clear photo or line of your handwriting, and the diffusion model mimics that style for every card!"
             : "One-DM is ready! Upload a handwriting photo below. (To enable full neural checkpoints on your AMD RX 580 or CUDA GPU, run the setup script: python -m app.handwriting.onedm.setup_onedm)"}
+        </p>
+      ) : null}
+      {engine === "drawfont" ? (
+        <p className="secondary">
+          {status?.drawfont?.ready
+            ? `Node.js ${status.drawfont.node_version ?? ""} is available. Upload a freeform photo, or print a template, fill it, and photograph the page. Nothing is uploaded.`
+            : "Install Node.js 18 or newer, then restart the API. Pages use the built-in Kalam face until a font is built."}
+          {" "}
+          <a href={`${API_URL}/api/handwriting/templates/drawfont-minimal.pdf`} download>Minimal template</a>
+          {" · "}
+          <a href={`${API_URL}/api/handwriting/templates/drawfont-spanish.pdf`} download>Spanish template</a>
+          {" · "}
+          <a href="https://drawyourfont.com" target="_blank" rel="noreferrer">drawyourfont.com</a>
+        </p>
+      ) : null}
+      {engine === "handfonted" ? (
+        <p className="secondary">
+          {status?.handfonted?.ready
+            ? "The HandFonted service is running. After you create the profile, the next page is the letter review: upload a photo, correct each character, generate the font, then try a sentence."
+            : "Start the HandFonted container with docker compose up -d handfonted. The usual sample list is not used for this option."}
         </p>
       ) : null}
       {engine === "handwrite" ? (

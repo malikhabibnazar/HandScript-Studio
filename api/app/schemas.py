@@ -29,9 +29,30 @@ class AnalysisOut(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
-PROFILE_ENGINES = {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm", "drawn"}
+PROFILE_ENGINES = {"graves", "handwrite", "pillow", "hw2font", "fontmaker", "gemini", "onedm", "drawn", "drawfont", "handfonted"}
 PILLOW_FACES = {"caveat", "homemade", "patrick", "kalam", "sacramento", "architects"}
+DRAWFONT_CAPTURES = {"minimal", "spanish", "freeform"}
 _INK_COLOR = re.compile(r"#[0-9a-fA-F]{6}")
+_ENGINE_ERROR = "engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, onedm, drawn, drawfont, or handfonted"
+
+
+class HandfontedGlyph(BaseModel):
+    id: str
+    label: str = ""
+    confidence: float = 0
+    kept: bool = True
+    sample: int = 1
+
+    @field_validator("label")
+    @classmethod
+    def _label(cls, value: str) -> str:
+        text = (value or "").strip()
+        return text[:1]
+
+    @field_validator("sample")
+    @classmethod
+    def _sample(cls, value: int) -> int:
+        return max(1, min(4, int(value or 1)))
 
 
 class ProfileStyle(BaseModel):
@@ -46,13 +67,26 @@ class ProfileStyle(BaseModel):
     word_spacing_px: float = 15
     char_spacing_px: float = -2.5
     ink_color: str | None = None
+    web_font_path: str | None = None
+    capture: str = "minimal"
+    chars: str = ""
+    smooth: float = 1
+    weight: float = 0
+    font_error: str | None = None
+    thickness: int = 100
+    glyphs: list[HandfontedGlyph] = Field(default_factory=list)
+
+    @field_validator("thickness")
+    @classmethod
+    def _thickness(cls, value: int) -> int:
+        return max(20, min(220, int(value)))
 
     @field_validator("engine")
     @classmethod
     def _engine(cls, value: str) -> str:
         engine = (value or "graves").strip().lower()
         if engine not in PROFILE_ENGINES:
-            raise ValueError("engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, onedm, or drawn")
+            raise ValueError(_ENGINE_ERROR)
         return engine
 
     @field_validator("source")
@@ -87,6 +121,29 @@ class ProfileStyle(BaseModel):
         if not _INK_COLOR.fullmatch(color):
             raise ValueError("ink_color must be #RRGGBB or empty")
         return color.lower()
+
+    @field_validator("capture")
+    @classmethod
+    def _capture(cls, value: str) -> str:
+        capture = (value or "minimal").strip().lower()
+        if capture not in DRAWFONT_CAPTURES:
+            raise ValueError("capture must be minimal, spanish, or freeform")
+        return capture
+
+    @field_validator("chars")
+    @classmethod
+    def _chars(cls, value: str) -> str:
+        return (value or "").strip()[:500]
+
+    @field_validator("smooth")
+    @classmethod
+    def _smooth(cls, value: float) -> float:
+        return max(0.0, min(2.0, float(value)))
+
+    @field_validator("weight")
+    @classmethod
+    def _weight(cls, value: float) -> float:
+        return max(-2.0, min(2.0, float(value)))
 
     @field_validator("font_family")
     @classmethod
@@ -127,7 +184,7 @@ class ProfileCreate(BaseModel):
     def _engine(cls, value: str) -> str:
         engine = (value or "handwrite").strip().lower()
         if engine not in PROFILE_ENGINES:
-            raise ValueError("engine must be graves, handwrite, pillow, hw2font, fontmaker, gemini, onedm, or drawn")
+            raise ValueError(_ENGINE_ERROR)
         return engine
 
     @field_validator("font_family")
@@ -178,6 +235,22 @@ class GlyphInventoryOut(BaseModel):
 
 class GlyphPreviewIn(BaseModel):
     text: str = ""
+
+
+class HandfontedGlyphUpdate(BaseModel):
+    glyphs: list[HandfontedGlyph]
+    thickness: int | None = None
+
+    @field_validator("thickness")
+    @classmethod
+    def _thickness(cls, value: int | None) -> int | None:
+        if value is None:
+            return None
+        return max(20, min(220, int(value)))
+
+
+class HandfontedPreview(BaseModel):
+    text: str = "The quick brown fox"
 
 
 class ElementOut(BaseModel):

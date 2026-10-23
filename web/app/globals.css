@@ -691,6 +691,29 @@ tbody tr:hover {
   margin-bottom: 18px;
 }
 
+.sample-block { margin-top: 18px; }
+.sample-block h3 { font-size: 14px; margin: 0 0 8px; }
+.sample-block .glyph-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.glyph-card {
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-alt);
+  padding: 8px; display: flex; flex-direction: column; gap: 6px; align-items: stretch;
+}
+.glyph-card.off { opacity: 0.45; }
+.glyph-card img, .glyph-ink {
+  width: 100%; height: 72px; object-fit: contain; background: #fff; border: 1px solid var(--border);
+  filter: invert(1);
+}
+.glyph-card input { text-align: center; font-size: 16px; }
+.font-preview {
+  display: block; margin-top: 14px; width: 100%; max-width: 920px; background: #fff;
+  border: 1px solid var(--border); padding: 12px;
+}
+
 .step {
   flex: 1;
   padding: 8px 10px;
