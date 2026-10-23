@@ -25,6 +25,7 @@ export type HandfontedGlyph = {
   confidence: number;
   kept: boolean;
   sample?: number;
+  manual?: boolean;
 };
 
 export type DrawfontCapture = "minimal" | "spanish" | "freeform";

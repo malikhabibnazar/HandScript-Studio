@@ -42,6 +42,7 @@ class HandfontedGlyph(BaseModel):
     confidence: float = 0
     kept: bool = True
     sample: int = 1
+    manual: bool = False
 
     @field_validator("label")
     @classmethod

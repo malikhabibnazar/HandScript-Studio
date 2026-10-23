@@ -112,6 +112,18 @@ export const api = {
     body.set("file", file);
     return request<Profile>(`/api/profiles/${id}/handfonted/process`, { method: "POST", body });
   },
+  addHandfontedGlyph: (id: string, file: File, label: string, sample: number) => {
+    const body = new FormData();
+    body.set("file", file);
+    body.set("label", label);
+    body.set("sample", String(sample));
+    return request<Profile>(`/api/profiles/${id}/handfonted/glyphs`, { method: "POST", body });
+  },
+  replaceHandfontedGlyph: (id: string, glyphId: string, file: File) => {
+    const body = new FormData();
+    body.set("file", file);
+    return request<Profile>(`/api/profiles/${id}/handfonted/glyphs/${encodeURIComponent(glyphId)}/image`, { method: "POST", body });
+  },
   saveHandfontedGlyphs: (id: string, glyphs: HandfontedGlyph[], thickness: number) =>
     request<Profile>(`/api/profiles/${id}/handfonted/glyphs`, {
       method: "PUT",

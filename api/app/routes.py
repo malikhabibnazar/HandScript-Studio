@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import re
 import time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -322,6 +323,37 @@ def _glyph_dir(profile_id: str):
     return Path(get_settings().storage_dir) / "handfonted" / profile_id / "glyphs"
 
 
+_GLYPH_ID = re.compile(r"^gl-[0-9a-f]{10}$")
+
+
+def _handfonted_failure(exc: Exception) -> HTTPException:
+    text = str(exc)
+    status = 503 if "not running" in text or "loading" in text else 422
+    return HTTPException(status_code=status, detail=text)
+
+
+def _single_character_png(raw: bytes, filename: str | None) -> bytes:
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty file")
+    from app.handwriting.handfonted_client import HandfontedError, crop_character
+
+    try:
+        return crop_character(raw, filename or "character.png")
+    except HandfontedError as exc:
+        raise _handfonted_failure(exc) from exc
+
+
+def _style_glyphs(style: dict) -> list[dict]:
+    return [dict(item) for item in list(style.get("glyphs") or []) if isinstance(item, dict)]
+
+
+def _remember_glyph_change(profile: Profile, style: dict, glyphs: list[dict]) -> None:
+    style["glyphs"] = glyphs
+    style["font_error"] = None
+    profile.style = style
+    profile.status = "Needs Review"
+
+
 @router.post("/profiles/{profile_id}/handfonted/process", response_model=ProfileOut)
 async def process_handfonted(profile_id: str, file: UploadFile = File(...), db: Session = Depends(get_db)) -> Profile:
     profile = _handfonted_profile(db, profile_id)
@@ -339,9 +371,7 @@ async def process_handfonted(profile_id: str, file: UploadFile = File(...), db: 
     try:
         found = process_image(raw, file.filename or "handwriting.png")
     except HandfontedError as exc:
-        text = str(exc)
-        status = 503 if "not running" in text or "loading" in text else 422
-        raise HTTPException(status_code=status, detail=text) from exc
+        raise _handfonted_failure(exc) from exc
     folder = _glyph_dir(profile.id)
     folder.mkdir(parents=True, exist_ok=True)
     glyphs = list(existing)
@@ -381,6 +411,92 @@ def handfonted_glyph(profile_id: str, glyph_id: str, db: Session = Depends(get_d
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Letter not found")
     return Response(content=path.read_bytes(), media_type="image/png")
+
+
+@router.post("/profiles/{profile_id}/handfonted/glyphs", response_model=ProfileOut)
+async def add_handfonted_glyph(
+    profile_id: str,
+    file: UploadFile = File(...),
+    label: str = Form(...),
+    sample: int = Form(...),
+    db: Session = Depends(get_db),
+) -> Profile:
+    """Attach one character the reader missed. This does not count as another sample photo."""
+    profile = _handfonted_profile(db, profile_id)
+    from app.handwriting.handfonted_client import ALPHABET
+
+    character = (label or "").strip()
+    if len(character) != 1 or character not in ALPHABET:
+        raise HTTPException(status_code=400, detail="Choose one letter or digit from A–Z, a–z, or 0–9.")
+    if isinstance(sample, bool) or sample < 1 or sample > 4:
+        raise HTTPException(status_code=400, detail="Upload a full sample before adding a missing character to it.")
+    style = dict(profile.style or {})
+    glyphs = _style_glyphs(style)
+    present = set()
+    for item in glyphs:
+        try:
+            present.add(int(item.get("sample") or 1))
+        except (TypeError, ValueError):
+            continue
+    if sample not in present:
+        raise HTTPException(status_code=400, detail="Upload a full sample before adding a missing character to it.")
+    for item in glyphs:
+        try:
+            number = int(item.get("sample") or 1)
+        except (TypeError, ValueError):
+            continue
+        if number == sample and str(item.get("label") or "") == character:
+            raise HTTPException(
+                status_code=400,
+                detail="This sample already has that character. Use Upload on its card to replace the image.",
+            )
+    png = _single_character_png(await file.read(), file.filename)
+    folder = _glyph_dir(profile.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    glyph_id = new_id("gl")
+    (folder / f"{glyph_id}.png").write_bytes(png)
+    glyphs.append({
+        "id": glyph_id,
+        "label": character,
+        "confidence": 1.0,
+        "kept": True,
+        "sample": sample,
+        "manual": True,
+    })
+    _remember_glyph_change(profile, style, glyphs)
+    log_activity(db, "document", profile.name, f"HandFonted added {character} to sample {sample}")
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+@router.post("/profiles/{profile_id}/handfonted/glyphs/{glyph_id}/image", response_model=ProfileOut)
+async def replace_handfonted_glyph(
+    profile_id: str,
+    glyph_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+) -> Profile:
+    """Replace one character's picture. The label and sample stay as the user left them."""
+    if not _GLYPH_ID.match(glyph_id or ""):
+        raise HTTPException(status_code=404, detail="Letter not found")
+    profile = _handfonted_profile(db, profile_id)
+    style = dict(profile.style or {})
+    glyphs = _style_glyphs(style)
+    match = next((item for item in glyphs if item.get("id") == glyph_id), None)
+    if match is None:
+        raise HTTPException(status_code=404, detail="Letter not found")
+    png = _single_character_png(await file.read(), file.filename)
+    folder = _glyph_dir(profile.id)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{glyph_id}.png").write_bytes(png)
+    match["manual"] = True
+    match["confidence"] = 1.0
+    _remember_glyph_change(profile, style, glyphs)
+    log_activity(db, "document", profile.name, "HandFonted replaced a character image")
+    db.commit()
+    db.refresh(profile)
+    return profile
 
 
 @router.put("/profiles/{profile_id}/handfonted/glyphs", response_model=ProfileOut)

@@ -661,3 +661,166 @@ def test_handfonted_keeps_four_samples(monkeypatch) -> None:
         )
         assert blocked.status_code == 400
         assert "4 samples" in blocked.json()["detail"]
+
+
+def test_handfonted_alphabet_is_62_letters_and_digits() -> None:
+    from app.handwriting.handfonted_client import ALPHABET
+
+    assert ALPHABET == set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+    assert len(ALPHABET) == 62
+
+
+def test_handfonted_fills_a_missing_character_and_replaces_a_crop(monkeypatch) -> None:
+    from app.handwriting.handfonted_client import HandfontedError
+
+    recognized = b"\x89PNG\r\n\x1a\n" + b"recognized"
+    single = b"\x89PNG\r\n\x1a\n" + b"single"
+    crops = {"calls": 0}
+
+    def fake_process(raw: bytes, filename: str) -> list[dict]:
+        assert raw.startswith(b"\x89PNG")
+        return [{"label": "A", "confidence": 0.91, "png": recognized}]
+
+    def fake_crop(raw: bytes, filename: str) -> bytes:
+        crops["calls"] += 1
+        assert filename
+        if raw == b"many":
+            raise HandfontedError("Upload an image that contains only that one character.")
+        if raw == b"down":
+            raise HandfontedError("The HandFonted container is not running.")
+        return single
+
+    def fake_build(glyphs: list[dict], dest: Path, *, font_name: str, thickness: int) -> None:
+        assert font_name == "Patched Hand"
+        assert thickness == 100
+        assert [item["label"] for item in glyphs] == ["Q"]
+        assert glyphs[0]["png"] == single
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"font-from-uploaded-q")
+
+    monkeypatch.setattr("app.handwriting.handfonted_client.process_image", fake_process)
+    monkeypatch.setattr("app.handwriting.handfonted_client.crop_character", fake_crop)
+    monkeypatch.setattr("app.handwriting.handfonted_client.build_font", fake_build)
+
+    def upload(client: TestClient, profile_id: str, raw: bytes, label: str, sample: str):
+        return client.post(
+            f"/api/profiles/{profile_id}/handfonted/glyphs",
+            files={"file": (f"{label}.png", raw, "image/png")},
+            data={"label": label, "sample": sample},
+        )
+
+    with TestClient(app) as client:
+        created = client.post("/api/profiles", json={"name": "Patched Hand", "engine": "handfonted"})
+        assert created.status_code == 201
+        profile_id = created.json()["id"]
+        processed = client.post(
+            f"/api/profiles/{profile_id}/handfonted/process",
+            files={"file": ("alphabet.png", b"\x89PNG\r\nphoto", "image/png")},
+        )
+        assert processed.status_code == 200
+        glyphs = processed.json()["style"]["glyphs"]
+        assert [item["label"] for item in glyphs] == ["A"]
+        assert glyphs[0]["manual"] is False
+        assert len(processed.json()["samples"]) == 1
+        letter = glyphs[0]
+        letter["kept"] = False
+        saved = client.put(
+            f"/api/profiles/{profile_id}/handfonted/glyphs",
+            json={"glyphs": [letter], "thickness": 100},
+        )
+        assert saved.status_code == 200
+
+        replaced = client.post(
+            f"/api/profiles/{profile_id}/handfonted/glyphs/{letter['id']}/image",
+            files={"file": ("a.png", b"\x89PNG\r\nreplacement", "image/png")},
+        )
+        assert replaced.status_code == 200
+        replaced_glyph = replaced.json()["style"]["glyphs"][0]
+        assert replaced_glyph["id"] == letter["id"]
+        assert replaced_glyph["label"] == "A"
+        assert replaced_glyph["sample"] == 1
+        assert replaced_glyph["kept"] is False
+        assert replaced_glyph["manual"] is True
+        assert replaced_glyph["confidence"] == 1
+        assert replaced.json()["status"] == "Needs Review"
+        image = client.get(f"/api/profiles/{profile_id}/handfonted/glyphs/{letter['id']}")
+        assert image.content == single
+
+        duplicate = upload(client, profile_id, b"\x89PNG\r\nanother-a", "A", "1")
+        assert duplicate.status_code == 400
+        assert "already has that character" in duplicate.json()["detail"]
+        assert crops["calls"] == 1
+
+        missing_sample = upload(client, profile_id, b"\x89PNG\r\nq", "Q", "2")
+        assert missing_sample.status_code == 400
+        assert "full sample" in missing_sample.json()["detail"]
+        rejected = upload(client, profile_id, b"\x89PNG\r\nbang", "!", "1")
+        assert rejected.status_code == 400
+        too_long = upload(client, profile_id, b"\x89PNG\r\naa", "AA", "1")
+        assert too_long.status_code == 400
+        empty = upload(client, profile_id, b"", "Q", "1")
+        assert empty.status_code == 400
+        many = upload(client, profile_id, b"many", "Q", "1")
+        assert many.status_code == 422
+        assert "only that one character" in many.json()["detail"]
+        offline = upload(client, profile_id, b"down", "Q", "1")
+        assert offline.status_code == 503
+
+        added = upload(client, profile_id, b"\x89PNG\r\nq", " Q ", "1")
+        assert added.status_code == 200
+        body = added.json()
+        assert body["status"] == "Needs Review"
+        assert len(body["samples"]) == 1
+        added_glyphs = body["style"]["glyphs"]
+        assert [item["label"] for item in added_glyphs] == ["A", "Q"]
+        uploaded = added_glyphs[1]
+        assert uploaded["manual"] is True
+        assert uploaded["kept"] is True
+        assert uploaded["sample"] == 1
+        assert client.get(f"/api/profiles/{profile_id}/handfonted/glyphs/{uploaded['id']}").content == single
+
+        again = upload(client, profile_id, b"\x89PNG\r\nq2", "Q", "1")
+        assert again.status_code == 400
+        lower = upload(client, profile_id, b"\x89PNG\r\nlower", "a", "1")
+        assert lower.status_code == 200
+        assert [item["label"] for item in lower.json()["style"]["glyphs"]] == ["A", "Q", "a"]
+        assert len(lower.json()["samples"]) == 1
+
+        for index in range(3):
+            nxt = client.post(
+                f"/api/profiles/{profile_id}/handfonted/process",
+                files={"file": (f"sample-{index}.png", b"\x89PNG\r\nphoto", "image/png")},
+            )
+            assert nxt.status_code == 200
+        assert len(client.get(f"/api/profiles/{profile_id}").json()["samples"]) == 4
+        blocked = client.post(
+            f"/api/profiles/{profile_id}/handfonted/process",
+            files={"file": ("sample-5.png", b"\x89PNG\r\nphoto", "image/png")},
+        )
+        assert blocked.status_code == 400
+        extra = upload(client, profile_id, b"\x89PNG\r\nb", "b", "4")
+        assert extra.status_code == 200
+        assert len(extra.json()["samples"]) == 4
+        assert extra.json()["style"]["glyphs"][-1]["label"] == "b"
+        assert extra.json()["style"]["glyphs"][-1]["sample"] == 4
+
+        generated = client.post(
+            f"/api/profiles/{profile_id}/handfonted/generate",
+            json={"glyphs": added_glyphs, "thickness": 100},
+        )
+        assert generated.status_code == 200
+        assert generated.json()["status"] == "Ready"
+        stored = {item["label"]: item for item in generated.json()["style"]["glyphs"]}
+        assert stored["Q"]["manual"] is True
+        assert stored["A"]["kept"] is False
+
+        unknown = client.post(
+            f"/api/profiles/{profile_id}/handfonted/glyphs/gl-0123456789/image",
+            files={"file": ("x.png", b"\x89PNG\r\nx", "image/png")},
+        )
+        assert unknown.status_code == 404
+        escaped = client.post(
+            f"/api/profiles/{profile_id}/handfonted/glyphs/..%2Fsecret/image",
+            files={"file": ("x.png", b"\x89PNG\r\nx", "image/png")},
+        )
+        assert escaped.status_code == 404

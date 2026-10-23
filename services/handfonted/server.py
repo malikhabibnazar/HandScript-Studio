@@ -152,15 +152,33 @@ def _segment(raw: bytes) -> list:
         Path(path).unlink(missing_ok=True)
 
 
+def _threshold(crop: np.ndarray) -> np.ndarray:
+    """Ink mask. Otsu keeps the solid center of a thick stroke; adaptive keeps thin edges.
+
+    Adaptive thresholding alone hollows a filled pen stroke, because the middle
+    of the stroke is no darker than the pixels around it.
+    """
+    gray = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    _, solid = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    edges = cv2.adaptiveThreshold(
+        blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5,
+    )
+    return cv2.bitwise_or(solid, edges)
+
+
+def _encode_png(image: np.ndarray) -> str | None:
+    ok, encoded = cv2.imencode(".png", image)
+    if not ok:
+        return None
+    return base64.b64encode(encoded.tobytes()).decode("ascii")
+
+
 def _label_all(crops: list) -> list[dict]:
     originals: list[np.ndarray] = []
     tensors = []
     for crop in crops:
-        gray = crop if crop.ndim == 2 else cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-        thresh = cv2.adaptiveThreshold(
-            blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY_INV, 11, 5,
-        )
+        thresh = _threshold(crop)
         square = pad_image_to_square(thresh, extra_padding_amount=1)
         tensors.append(_TRANSFORM(Image.fromarray(square)))
         originals.append(thresh)
@@ -179,15 +197,38 @@ def _label_all(crops: list) -> list[dict]:
         else:
             top = int(torch.argmax(probabilities[index]).item())
             label, score = CLASSES[top], float(probabilities[index, top].item())
-        ok, encoded = cv2.imencode(".png", image)
-        if not ok:
+        encoded = _encode_png(image)
+        if encoded is None:
             continue
         characters.append({
             "label": label,
             "confidence": round(score, 4),
-            "image_png_base64": base64.b64encode(encoded.tobytes()).decode("ascii"),
+            "image_png_base64": encoded,
         })
     return characters
+
+
+@app.post("/v1/crop")
+async def crop(image: UploadFile = File(...)) -> dict:
+    """Segment one uploaded character and return its ink, without classifying it."""
+    if not _ready or _detector is None:
+        raise HTTPException(status_code=503, detail=_message)
+    raw = await image.read()
+    if not raw:
+        raise HTTPException(status_code=400, detail="Empty image")
+    with _lock:
+        crops = _segment(raw)
+        if len(crops) != 1:
+            detail = (
+                "Upload an image that contains only that one character."
+                if crops
+                else "No character was found. Upload an image that contains only that one character."
+            )
+            raise HTTPException(status_code=422, detail=detail)
+        encoded = _encode_png(_threshold(crops[0]))
+    if not encoded:
+        raise HTTPException(status_code=422, detail="The character image could not be read.")
+    return {"image_png_base64": encoded}
 
 
 def _pairs(characters: list[FontGlyph]) -> list[tuple[str, np.ndarray]]:

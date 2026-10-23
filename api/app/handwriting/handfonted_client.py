@@ -13,6 +13,10 @@ class HandfontedError(RuntimeError):
     pass
 
 
+# Same 62 classes the HandFonted model scores: A–Z, a–z, and 0–9.
+ALPHABET = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
+
+
 def handfonted_status() -> dict:
     url = _url()
     try:
@@ -57,6 +61,34 @@ def process_image(raw: bytes, filename: str) -> list[dict]:
     if not glyphs:
         raise HandfontedError("No characters were found in that photo.")
     return glyphs
+
+
+def crop_character(raw: bytes, filename: str) -> bytes:
+    """Return one thresholded character PNG. The caller supplies the label."""
+    try:
+        response = httpx.post(
+            f"{_url()}/v1/crop",
+            files={"image": (filename or "character.png", raw, "application/octet-stream")},
+            timeout=180.0,
+        )
+    except httpx.HTTPError as exc:
+        raise HandfontedError("The HandFonted container is not running.") from exc
+    _raise_for_status(response)
+    encoded = ""
+    try:
+        body = response.json()
+        encoded = body.get("image_png_base64") if isinstance(body, dict) else ""
+    except Exception:
+        encoded = ""
+    if not encoded:
+        raise HandfontedError("No character was found. Upload an image that contains only that one character.")
+    try:
+        png = base64.b64decode(encoded)
+    except Exception as exc:
+        raise HandfontedError("The character image could not be read.") from exc
+    if not png:
+        raise HandfontedError("No character was found. Upload an image that contains only that one character.")
+    return png
 
 
 def build_font(glyphs: list[dict], dest: Path, *, font_name: str, thickness: int) -> None:
