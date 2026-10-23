@@ -181,6 +181,113 @@ export function downloadExport(id: string) {
   window.location.href = `${API_URL}/api/exports/${id}/download`;
 }
 
+let activePrint: { frame: HTMLIFrameElement; url: string } | null = null;
+
+function releasePrintFrame() {
+  if (!activePrint) return;
+  activePrint.frame.remove();
+  URL.revokeObjectURL(activePrint.url);
+  activePrint = null;
+}
+
+function mountPrintFrame() {
+  releasePrintFrame();
+  const frame = document.createElement("iframe");
+  frame.title = "Print document";
+  frame.setAttribute("aria-hidden", "true");
+  frame.style.cssText = "position:fixed;left:-10000px;top:0;width:816px;height:1056px;border:0;";
+  document.body.appendChild(frame);
+  return frame;
+}
+
+function printFrame(frame: HTMLIFrameElement, url: string) {
+  const win = frame.contentWindow;
+  if (!win) {
+    frame.remove();
+    URL.revokeObjectURL(url);
+    throw new Error("Could not open the document for printing.");
+  }
+  activePrint = { frame, url };
+  win.addEventListener("afterprint", releasePrintFrame, { once: true });
+  win.focus();
+  win.print();
+}
+
+function printPdf(url: string) {
+  const frame = mountPrintFrame();
+  return new Promise<void>((resolve, reject) => {
+    let started = false;
+    const start = () => {
+      if (started) return;
+      started = true;
+      window.setTimeout(() => {
+        try {
+          printFrame(frame, url);
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      }, 250);
+    };
+    frame.onload = start;
+    window.setTimeout(start, 1200);
+    frame.src = url;
+  });
+}
+
+function printImage(url: string) {
+  const frame = mountPrintFrame();
+  return new Promise<void>((resolve, reject) => {
+    frame.onload = () => {
+      const image = frame.contentDocument?.querySelector("img");
+      if (!image) {
+        frame.remove();
+        URL.revokeObjectURL(url);
+        reject(new Error("Could not prepare the image for printing."));
+        return;
+      }
+      const start = () => {
+        try {
+          printFrame(frame, url);
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      };
+      if (image.complete && image.naturalWidth > 0) start();
+      else {
+        image.addEventListener("load", start, { once: true });
+        image.addEventListener("error", () => {
+          frame.remove();
+          URL.revokeObjectURL(url);
+          reject(new Error("Could not load the image for printing."));
+        }, { once: true });
+      }
+    };
+    frame.srcdoc = `<!doctype html><html><head><title>Print</title><style>@page{margin:0.4in}html,body{margin:0}img{display:block;max-width:100%;height:auto}</style></head><body><img src="${url}" alt=""></body></html>`;
+  });
+}
+
+export async function printExport(id: string, filename = "") {
+  const blob = await requestBlob(`/api/exports/${id}/download`);
+  const name = filename.toLowerCase();
+  const type = blob.type.toLowerCase();
+  if (type.includes("zip") || name.endsWith(".zip")) {
+    throw new Error("This export is a zip of separate files. Download it, or generate a combined PDF to print every card together.");
+  }
+  const url = URL.createObjectURL(blob);
+  if (type.includes("png") || name.endsWith(".png")) {
+    await printImage(url);
+    return;
+  }
+  if (type.includes("pdf") || name.endsWith(".pdf")) {
+    await printPdf(url);
+    return;
+  }
+  URL.revokeObjectURL(url);
+  throw new Error("This file can't be printed from the browser. Use Download instead.");
+}
+
 export function previewUrl(documentId: string) {
   return `${API_URL}/api/documents/${documentId}/preview`;
 }

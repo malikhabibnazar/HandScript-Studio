@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Icon } from "./icons";
 
 const ITEMS = [
@@ -19,12 +19,28 @@ export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [dark, setDark] = useState(false);
+  const [motionReady, setMotionReady] = useState(false);
+
+  const toggleCollapsed = useCallback(() => {
+    setCollapsed((value) => {
+      localStorage.setItem("hs-collapsed", value ? "0" : "1");
+      return !value;
+    });
+  }, []);
 
   useEffect(() => {
     const stored = localStorage.getItem("hs-collapsed") === "1";
     const theme = localStorage.getItem("hs-theme");
     setCollapsed(stored);
     setDark(theme === "dark");
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setMotionReady(true));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
   }, []);
 
   useEffect(() => {
@@ -37,15 +53,12 @@ export function Shell({ children }: { children: ReactNode }) {
       }
       if (event.key.toLowerCase() === "b") {
         event.preventDefault();
-        setCollapsed((value) => {
-          localStorage.setItem("hs-collapsed", value ? "0" : "1");
-          return !value;
-        });
+        toggleCollapsed();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [router]);
+  }, [router, toggleCollapsed]);
 
   function toggleTheme() {
     const next = dark ? "light" : "dark";
@@ -55,10 +68,11 @@ export function Shell({ children }: { children: ReactNode }) {
   }
 
   const section = "/" + (pathname.split("/")[1] || "dashboard");
+  const sidebarLabel = collapsed ? "Expand sidebar" : "Collapse sidebar";
 
   return (
     <div className="shell">
-      <aside className={collapsed ? "sidebar collapsed" : "sidebar"}>
+      <aside className={`sidebar${collapsed ? " collapsed" : ""}${motionReady ? " animate" : ""}`}>
         <div className="brand">
           <div className="brand-mark"><Icon name="handwriting" size={16} /></div>
           <div className="brand-copy">
@@ -82,12 +96,13 @@ export function Shell({ children }: { children: ReactNode }) {
       </aside>
       <div className="main">
         <div className="topbar">
-          <button className="icon-btn" onClick={() => {
-            setCollapsed((value) => {
-              localStorage.setItem("hs-collapsed", value ? "0" : "1");
-              return !value;
-            });
-          }} aria-label="Collapse sidebar"><Icon name="sidebar" /></button>
+          <button
+            className="icon-btn sidebar-toggle"
+            onClick={toggleCollapsed}
+            aria-label={sidebarLabel}
+            aria-expanded={!collapsed}
+            data-tooltip={sidebarLabel}
+          ><Icon name="sidebar" /></button>
           <div className="grow" />
           <button className="icon-btn" onClick={toggleTheme} aria-label="Toggle theme">
             <Icon name={dark ? "sun" : "moon"} />

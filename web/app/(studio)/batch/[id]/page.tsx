@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Badge, useToast } from "@/components/ui";
-import { API_URL, api, downloadExport } from "@/lib/api";
+import { API_URL, api, downloadExport, printExport } from "@/lib/api";
 import type { Batch, ExportRecord } from "@/lib/types";
 
 export default function BatchProgressPage() {
@@ -12,6 +12,7 @@ export default function BatchProgressPage() {
   const toast = useToast();
   const [batch, setBatch] = useState<Batch | null>(null);
   const [exportRow, setExportRow] = useState<ExportRecord | null>(null);
+  const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
     api.batch(params.id).then(setBatch).catch((err: Error) => toast(err.message, "danger"));
@@ -64,11 +65,24 @@ export default function BatchProgressPage() {
           <button className="btn danger" onClick={async () => setBatch(await api.cancelBatch(batch.id))}>Cancel</button>
         ) : null}
         {exportRow?.has_file ? (
-          <button className="btn primary" onClick={() => {
-            if (!exportRow) return;
-            downloadExport(exportRow.id);
-            toast("Download started", "success");
-          }}>Download</button>
+          <>
+            <button className="btn primary" onClick={() => {
+              if (!exportRow) return;
+              downloadExport(exportRow.id);
+              toast("Download started", "success");
+            }}>Download</button>
+            <button className="btn secondary" disabled={printing} onClick={async () => {
+              if (!exportRow) return;
+              setPrinting(true);
+              try {
+                await printExport(exportRow.id, exportRow.filename);
+              } catch (err) {
+                toast(err instanceof Error ? err.message : "Could not print", "danger");
+              } finally {
+                setPrinting(false);
+              }
+            }}>{printing ? "Printing…" : "Print"}</button>
+          </>
         ) : null}
         {done ? <button className="btn secondary" onClick={() => router.push("/exports")}>View in Exports</button> : null}
       </div>
