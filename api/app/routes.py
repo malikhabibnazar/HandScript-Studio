@@ -366,8 +366,6 @@ async def process_handfonted(profile_id: str, file: UploadFile = File(...), db: 
     existing = [item for item in list(style.get("glyphs") or []) if isinstance(item, dict)]
     used = [int(item.get("sample") or 1) for item in existing]
     sample_no = (max(used) if used else 0) + 1
-    if sample_no > 4:
-        raise HTTPException(status_code=400, detail="This profile already has 4 samples.")
     try:
         found = process_image(raw, file.filename or "handwriting.png")
     except HandfontedError as exc:
@@ -428,7 +426,7 @@ async def add_handfonted_glyph(
     character = (label or "").strip()
     if len(character) != 1 or character not in ALPHABET:
         raise HTTPException(status_code=400, detail="Choose one letter or digit from A–Z, a–z, or 0–9.")
-    if isinstance(sample, bool) or sample < 1 or sample > 4:
+    if isinstance(sample, bool) or sample < 1:
         raise HTTPException(status_code=400, detail="Upload a full sample before adding a missing character to it.")
     style = dict(profile.style or {})
     glyphs = _style_glyphs(style)
@@ -1186,8 +1184,7 @@ def delete_export(export_id: str, db: Session = Depends(get_db)) -> None:
     db.commit()
 
 
-@router.get("/exports/{export_id}/download")
-def download_export(export_id: str, db: Session = Depends(get_db)) -> Response:
+def _export_file(export_id: str, db: Session) -> tuple[bytes, str, str]:
     row = _one(db, ExportRecord, export_id)
     if not row.artifact_key:
         raise HTTPException(status_code=404, detail="This export has no downloadable file")
@@ -1196,9 +1193,34 @@ def download_export(export_id: str, db: Session = Depends(get_db)) -> Response:
     except Exception as exc:
         raise HTTPException(status_code=404, detail="File is no longer in storage") from exc
     filename = export_filename(row.batch_name, row.artifact_key)
-    media = "application/zip" if filename.endswith(".zip") else "application/pdf" if filename.endswith(".pdf") else "image/png"
+    if filename.endswith(".zip"):
+        media = "application/zip"
+    elif filename.endswith(".pdf"):
+        media = "application/pdf"
+    else:
+        media = "image/png"
+    return data, filename, media
+
+
+@router.get("/exports/{export_id}/download")
+def download_export(export_id: str, db: Session = Depends(get_db)) -> Response:
+    data, filename, media = _export_file(export_id, db)
     return Response(content=data, media_type=media, headers={
         "Content-Disposition": f'attachment; filename="{filename}"',
+    })
+
+
+@router.get("/exports/{export_id}/preview")
+def preview_export(export_id: str, db: Session = Depends(get_db)) -> Response:
+    data, filename, media = _export_file(export_id, db)
+    if media == "application/zip":
+        raise HTTPException(
+            status_code=422,
+            detail="This export is a zip of separate files. Download it, or generate a combined PDF to preview every card together.",
+        )
+    return Response(content=data, media_type=media, headers={
+        "Content-Disposition": f'inline; filename="{filename}"',
+        "Cache-Control": "private, no-store",
     })
 
 

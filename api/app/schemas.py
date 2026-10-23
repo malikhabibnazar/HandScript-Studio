@@ -53,7 +53,7 @@ class HandfontedGlyph(BaseModel):
     @field_validator("sample")
     @classmethod
     def _sample(cls, value: int) -> int:
-        return max(1, min(4, int(value or 1)))
+        return max(1, int(value or 1))
 
 
 class ProfileStyle(BaseModel):

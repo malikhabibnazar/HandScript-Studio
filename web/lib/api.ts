@@ -193,6 +193,21 @@ export function downloadExport(id: string) {
   window.location.href = `${API_URL}/api/exports/${id}/download`;
 }
 
+export function previewExport(id: string, filename = "") {
+  const name = filename.toLowerCase();
+  if (name.endsWith(".zip")) {
+    throw new Error("This export is a zip of separate files. Download it, or generate a combined PDF to preview every card together.");
+  }
+  if (!name.endsWith(".pdf") && !name.endsWith(".png")) {
+    throw new Error("This file can't be previewed in the browser. Use Download instead.");
+  }
+  const tab = window.open(`${API_URL}/api/exports/${id}/preview`, "_blank");
+  if (!tab) {
+    throw new Error("The browser blocked the preview. Allow pop-ups for this site and try again.");
+  }
+  tab.opener = null;
+}
+
 let activePrint: { frame: HTMLIFrameElement; url: string } | null = null;
 
 function releasePrintFrame() {

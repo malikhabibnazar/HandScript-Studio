@@ -101,6 +101,13 @@ def test_batch_renders_files() -> None:
         download = client.get(f"/api/exports/{match['id']}/download")
         assert download.status_code == 200
         assert download.content[:4] == b"%PDF"
+        assert download.headers["content-disposition"].startswith("attachment;")
+        preview = client.get(f"/api/exports/{match['id']}/preview")
+        assert preview.status_code == 200
+        assert preview.content == download.content
+        disposition = preview.headers["content-disposition"]
+        assert disposition.startswith("inline;")
+        assert "Test notes.pdf" in disposition
 
 
 def test_page_sizes_fields_and_engine_fallback() -> None:
@@ -636,7 +643,7 @@ def test_handfonted_reviews_letters_then_previews_text(monkeypatch) -> None:
         assert Image.open(io.BytesIO(preview.content)).size[0] > 0
 
 
-def test_handfonted_keeps_four_samples(monkeypatch) -> None:
+def test_handfonted_accepts_any_number_of_samples(monkeypatch) -> None:
     png = b"\x89PNG\r\n\x1a\n" + b"glyph"
 
     def fake_process(raw: bytes, filename: str) -> list[dict]:
@@ -644,9 +651,10 @@ def test_handfonted_keeps_four_samples(monkeypatch) -> None:
 
     monkeypatch.setattr("app.handwriting.handfonted_client.process_image", fake_process)
     with TestClient(app) as client:
-        created = client.post("/api/profiles", json={"name": "Four Hands", "engine": "handfonted"})
+        created = client.post("/api/profiles", json={"name": "Many Hands", "engine": "handfonted"})
         profile_id = created.json()["id"]
-        for index in range(4):
+        glyphs = []
+        for index in range(6):
             processed = client.post(
                 f"/api/profiles/{profile_id}/handfonted/process",
                 files={"file": (f"sample-{index}.png", b"\x89PNG\r\nphoto", "image/png")},
@@ -655,12 +663,13 @@ def test_handfonted_keeps_four_samples(monkeypatch) -> None:
             glyphs = processed.json()["style"]["glyphs"]
             assert len(glyphs) == index + 1
             assert glyphs[-1]["sample"] == index + 1
-        blocked = client.post(
-            f"/api/profiles/{profile_id}/handfonted/process",
-            files={"file": ("sample-5.png", b"\x89PNG\r\nphoto", "image/png")},
+            assert len(processed.json()["samples"]) == index + 1
+        saved = client.put(
+            f"/api/profiles/{profile_id}/handfonted/glyphs",
+            json={"glyphs": glyphs, "thickness": 100},
         )
-        assert blocked.status_code == 400
-        assert "4 samples" in blocked.json()["detail"]
+        assert saved.status_code == 200
+        assert [item["sample"] for item in saved.json()["style"]["glyphs"]] == [1, 2, 3, 4, 5, 6]
 
 
 def test_handfonted_alphabet_is_62_letters_and_digits() -> None:
@@ -786,23 +795,18 @@ def test_handfonted_fills_a_missing_character_and_replaces_a_crop(monkeypatch) -
         assert [item["label"] for item in lower.json()["style"]["glyphs"]] == ["A", "Q", "a"]
         assert len(lower.json()["samples"]) == 1
 
-        for index in range(3):
+        for index in range(4):
             nxt = client.post(
                 f"/api/profiles/{profile_id}/handfonted/process",
                 files={"file": (f"sample-{index}.png", b"\x89PNG\r\nphoto", "image/png")},
             )
             assert nxt.status_code == 200
-        assert len(client.get(f"/api/profiles/{profile_id}").json()["samples"]) == 4
-        blocked = client.post(
-            f"/api/profiles/{profile_id}/handfonted/process",
-            files={"file": ("sample-5.png", b"\x89PNG\r\nphoto", "image/png")},
-        )
-        assert blocked.status_code == 400
-        extra = upload(client, profile_id, b"\x89PNG\r\nb", "b", "4")
+        assert len(client.get(f"/api/profiles/{profile_id}").json()["samples"]) == 5
+        extra = upload(client, profile_id, b"\x89PNG\r\nb", "b", "5")
         assert extra.status_code == 200
-        assert len(extra.json()["samples"]) == 4
+        assert len(extra.json()["samples"]) == 5
         assert extra.json()["style"]["glyphs"][-1]["label"] == "b"
-        assert extra.json()["style"]["glyphs"][-1]["sample"] == 4
+        assert extra.json()["style"]["glyphs"][-1]["sample"] == 5
 
         generated = client.post(
             f"/api/profiles/{profile_id}/handfonted/generate",

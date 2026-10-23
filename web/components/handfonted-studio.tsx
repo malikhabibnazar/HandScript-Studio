@@ -6,7 +6,6 @@ import { Badge, useConfirm, useToast } from "@/components/ui";
 import { API_URL, api } from "@/lib/api";
 import type { HandfontedGlyph, Profile } from "@/lib/types";
 
-const MAX_SAMPLES = 4;
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 const ALPHABET_CHARS = new Set(ALPHABET);
 
@@ -62,7 +61,6 @@ export function HandfontedStudio({
   }, [glyphs]);
 
   const kept = glyphs.filter((glyph) => glyph.kept && glyph.label.length === 1);
-  const atLimit = sets.length >= MAX_SAMPLES;
   const locked = busy !== null || pending !== null;
 
   function replace(id: string, patch: Partial<HandfontedGlyph>) {
@@ -150,7 +148,7 @@ export function HandfontedStudio({
           hidden
           type="file"
           accept="image/*,.png,.jpg,.jpeg,.webp"
-          disabled={busy !== null || pending !== null || atLimit}
+          disabled={busy !== null || pending !== null}
           onChange={async (event) => {
             const file = event.target.files?.[0];
             event.target.value = "";
@@ -203,7 +201,7 @@ export function HandfontedStudio({
         <div>
           <button className="btn ghost" onClick={() => router.push("/handwriting")}>Handwriting</button>
           <h1 style={{ fontSize: 22, marginTop: 8 }}>HandFonted</h1>
-          <p className="secondary">Upload up to four photos. Each photo should contain A–Z, a–z, and 0–9. If one is missing, or the reader got it wrong, upload a picture of that single character. A batch uses a different drawing each time a character appears.</p>
+          <p className="secondary">Upload as many photos as you need. Each photo should contain A–Z, a–z, and 0–9. If one is missing, or the reader got it wrong, upload a picture of that single character. A batch uses a different drawing each time a character appears.</p>
         </div>
         <div className="row">
           <Badge value={profile.status} />
@@ -227,7 +225,7 @@ export function HandfontedStudio({
 
       <section className="card">
         <h2>1. Photos</h2>
-        <p className="sub">Use a dark pen and keep the characters apart. {sets.length} of {MAX_SAMPLES} samples uploaded.</p>
+        <p className="sub">Use a dark pen and keep the characters apart. {sets.length} {sets.length === 1 ? "sample" : "samples"} uploaded.</p>
         <div className="grid-2">
           <div className="field">
             <label>Profile name</label>
@@ -341,9 +339,7 @@ export function HandfontedStudio({
         })}
         {sets.length > 0 ? (
           <div className="row" style={{ marginTop: 16 }}>
-            {atLimit ? (
-              <span className="secondary">Four samples is the maximum for this profile.</span>
-            ) : uploadControl("Upload another sample", false)}
+            {uploadControl("Upload another sample", false)}
           </div>
         ) : null}
         <div className="row" style={{ marginTop: 14, justifyContent: "flex-end" }}>

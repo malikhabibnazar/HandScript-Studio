@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Badge, useToast } from "@/components/ui";
-import { API_URL, api, downloadExport, printExport } from "@/lib/api";
+import { API_URL, api, downloadExport, previewExport, printExport } from "@/lib/api";
 import type { Batch, ExportRecord } from "@/lib/types";
 
 export default function BatchProgressPage() {
@@ -82,6 +82,14 @@ export default function BatchProgressPage() {
                 setPrinting(false);
               }
             }}>{printing ? "Printing…" : "Print"}</button>
+            <button className="btn secondary" type="button" onClick={() => {
+              if (!exportRow) return;
+              try {
+                previewExport(exportRow.id, exportRow.filename);
+              } catch (err) {
+                toast(err instanceof Error ? err.message : "Could not open the preview", "danger");
+              }
+            }}>Preview</button>
           </>
         ) : null}
         {done ? <button className="btn secondary" onClick={() => router.push("/exports")}>View in Exports</button> : null}
