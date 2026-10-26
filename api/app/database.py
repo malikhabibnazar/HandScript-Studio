@@ -38,21 +38,43 @@ def init_engine() -> None:
     engine, SessionLocal = _connect()
 
 
-def init_db() -> None:
-    from app import models  # noqa: F401
+# Held while the API and worker both start, so only one process creates tables.
+_SCHEMA_LOCK = 864201
+
+
+def _seed() -> None:
     from app.seed import seed_if_empty
 
-    if engine is None or SessionLocal is None:
-        init_engine()
-    assert engine is not None and SessionLocal is not None
-    Base.metadata.create_all(engine)
-    _ensure_profile_style()
+    assert SessionLocal is not None
     db = SessionLocal()
     try:
         seed_if_empty(db)
         db.commit()
     finally:
         db.close()
+
+
+def init_db() -> None:
+    from app import models  # noqa: F401
+
+    if engine is None or SessionLocal is None:
+        init_engine()
+    assert engine is not None and SessionLocal is not None
+    if engine.dialect.name != "postgresql":
+        Base.metadata.create_all(engine)
+        _ensure_profile_style()
+        _seed()
+        return
+    with engine.connect() as lock:
+        lock.execute(text("SELECT pg_advisory_lock(:key)"), {"key": _SCHEMA_LOCK})
+        lock.commit()
+        try:
+            Base.metadata.create_all(engine)
+            _ensure_profile_style()
+            _seed()
+        finally:
+            lock.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": _SCHEMA_LOCK})
+            lock.commit()
 
 
 # Created at import so other modules receive the live session factory,

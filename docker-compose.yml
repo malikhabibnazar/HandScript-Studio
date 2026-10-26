@@ -21,7 +21,9 @@ services:
       - "6379:6379"
 
   minio:
-    image: minio/minio
+    # minio/minio was removed from Docker Hub. Silo is a drop-in S3 server
+    # with the same MINIO_* settings and server command.
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: handscript
@@ -46,6 +48,8 @@ services:
       HANDFONTED_URL: http://handfonted:8010
     ports:
       - "8000:8000"
+    volumes:
+      - studiofiles:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -61,6 +65,8 @@ services:
       S3_ACCESS_KEY: handscript
       S3_SECRET_KEY: handscriptsecret
       EMBEDDED_WORKER: "false"
+    volumes:
+      - studiofiles:/app/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -89,3 +95,4 @@ services:
 volumes:
   pgdata:
   minio:
+  studiofiles:
