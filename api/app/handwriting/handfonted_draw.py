@@ -44,8 +44,11 @@ class GlyphBank:
 
     def source(self, path: Path) -> Image.Image | None:
         if path not in self.cache:
+            image = None
             try:
-                image = Image.open(path).convert("L")
+                with Image.open(path) as opened:
+                    image = opened.convert("L")
+                    image.load()
             except Exception:
                 image = None
             self.cache[path] = image

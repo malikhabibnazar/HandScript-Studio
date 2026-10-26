@@ -110,6 +110,75 @@ def test_batch_renders_files() -> None:
         assert "Test notes.pdf" in disposition
 
 
+def test_combined_batch_publishes_when_some_pages_fail() -> None:
+    """A combined batch that already reached the last row still produces a PDF."""
+    from PIL import Image
+
+    import app.engine as engine
+
+    original = engine.render_page
+
+    def fake_page(template, elements, record, **kwargs):
+        if str(record.get("code")) == "222":
+            raise RuntimeError("row could not be drawn")
+        return Image.new("RGB", (40, 30), "white")
+
+    engine.render_page = fake_page
+    try:
+        with TestClient(app) as client:
+            imported = client.post("/api/imports", files={"file": ("codes.csv", b"code\n111\n222\n333\n", "text/csv")})
+            assert imported.status_code == 201
+            created = client.post("/api/batches", json={
+                "name": "Partial cards",
+                "template_id": "tpl-thankyou",
+                "profile_id": "pf-amelia",
+                "import_id": imported.json()["id"],
+                "export_format": "PDF",
+                "individual": False,
+                "combined": True,
+            })
+            assert created.status_code == 201
+            batch_id = created.json()["id"]
+
+        database.init_db()
+        assert database.SessionLocal is not None
+        db = database.SessionLocal()
+        try:
+            from app.models import BatchJob
+
+            job = db.get(BatchJob, batch_id)
+            assert job is not None
+            job.cursor = job.total
+            job.generated = job.total
+            job.failed = 0
+            job.status = "Queued"
+            db.commit()
+        finally:
+            db.close()
+
+        for _ in range(6):
+            db = database.SessionLocal()
+            try:
+                engine.process_one_tick(db)
+            finally:
+                db.close()
+
+        with TestClient(app) as client:
+            batch = client.get(f"/api/batches/{batch_id}").json()
+            assert batch["status"] == "Completed"
+            assert batch["generated"] == 2
+            assert batch["failed"] == 1
+            exports = client.get("/api/exports").json()
+            match = next(item for item in exports if item["batch_id"] == batch_id)
+            assert match["status"] == "Partial"
+            assert match["file_count"] == 2
+            download = client.get(f"/api/exports/{match['id']}/download")
+            assert download.status_code == 200
+            assert download.content[:4] == b"%PDF"
+    finally:
+        engine.render_page = original
+
+
 def test_page_sizes_fields_and_engine_fallback() -> None:
     import io
 

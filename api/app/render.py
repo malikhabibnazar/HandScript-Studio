@@ -152,11 +152,52 @@ def render_combined_pdf(
     seeds: list[int] | None = None,
     **ink,
 ) -> bytes:
-    pages = []
-    for index, record in enumerate(records or [{}]):
+    """Draw each page and release it before the next one is rendered."""
+    rows = list(records or [])
+    width = float(template["width_in"]) * 72
+    height = float(template["height_in"]) * 72
+    buf = io.BytesIO()
+    pdf = pdfcanvas.Canvas(buf, pagesize=(width, height))
+    drawn = 0
+    for index, record in enumerate(rows):
         seed = seeds[index] if seeds and index < len(seeds) else index
-        pages.append(render_page(template, elements, record, dpi=dpi, seed=seed, **ink))
-    return _pdf_from_pages(pages, template)
+        page = render_page(template, elements, record, dpi=dpi, seed=seed, **ink)
+        try:
+            if drawn:
+                pdf.showPage()
+            _draw_page(pdf, page, width, height)
+            drawn += 1
+        finally:
+            page.close()
+    pdf.save()
+    return buf.getvalue()
+
+
+def png_bytes(page: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    page.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def pdf_bytes(page: Image.Image, template: dict) -> bytes:
+    return _pdf_from_pages([page], template)
+
+
+def write_pdf_from_pngs(blobs, template: dict, dest) -> int:
+    """Write one PDF to a file path. Only one page image is loaded at a time."""
+    width = float(template["width_in"]) * 72
+    height = float(template["height_in"]) * 72
+    pdf = pdfcanvas.Canvas(str(dest), pagesize=(width, height))
+    drawn = 0
+    for blob in blobs:
+        if drawn:
+            pdf.showPage()
+        stream = io.BytesIO(blob)
+        pdf.drawImage(ImageReader(stream), 0, 0, width=width, height=height, preserveAspectRatio=False, mask="auto")
+        stream.close()
+        drawn += 1
+    pdf.save()
+    return drawn
 
 
 def _box(element: dict, dpi: int, page_w: int, page_h: int) -> tuple[int, int, int, int]:
@@ -188,17 +229,24 @@ def _divider(page: Image.Image, box: tuple[int, int, int, int], dpi: int) -> Non
     draw.line((x, mid, x + w, mid), fill=(197, 200, 206), width=max(1, dpi // 200))
 
 
+def _draw_page(pdf, page: Image.Image, width: float, height: float) -> None:
+    stream = io.BytesIO()
+    page.save(stream, format="PNG")
+    stream.seek(0)
+    pdf.drawImage(ImageReader(stream), 0, 0, width=width, height=height, preserveAspectRatio=False, mask="auto")
+    stream.close()
+
+
 def _pdf_from_pages(pages: list[Image.Image], template: dict) -> bytes:
     width = float(template["width_in"]) * 72
     height = float(template["height_in"]) * 72
     buf = io.BytesIO()
     pdf = pdfcanvas.Canvas(buf, pagesize=(width, height))
-    for index, page in enumerate(pages):
-        stream = io.BytesIO()
-        page.save(stream, format="PNG")
-        stream.seek(0)
-        pdf.drawImage(ImageReader(stream), 0, 0, width=width, height=height, preserveAspectRatio=False, mask="auto")
-        if index < len(pages) - 1:
+    drawn = 0
+    for page in pages:
+        if drawn:
             pdf.showPage()
+        _draw_page(pdf, page, width, height)
+        drawn += 1
     pdf.save()
     return buf.getvalue()

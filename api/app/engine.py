@@ -2,10 +2,13 @@
 
 The API and the worker process share these functions. Each tick renders one
 record, stores the file, and commits so progress events stay current.
+A page that fails is skipped. The batch still finishes and the successful
+pages are published.
 """
 from __future__ import annotations
 
-import io
+import logging
+import tempfile
 import zipfile
 from pathlib import Path
 from uuid import uuid4
@@ -15,10 +18,12 @@ from sqlalchemy.orm import Session
 
 from app.models import Activity, AppSetting, BatchJob, ExportRecord, Profile, Template, utcnow
 from app.config import get_settings
-from app.render import parse_dpi, render_combined_pdf, render_pdf, render_png, stable_seed
+from app.render import parse_dpi, pdf_bytes, png_bytes, render_page, stable_seed, write_pdf_from_pngs
 from app.schemas import export_filename
 from app.seed import DEFAULT_SETTINGS
 from app.storage import get_storage
+
+log = logging.getLogger(__name__)
 
 
 def new_id(prefix: str) -> str:
@@ -87,19 +92,146 @@ def profile_ink(profile: Profile | None) -> dict:
     return ink
 
 
-def _render_one(fmt: str, template: Template, record: dict, *, dpi: int, seed: int, profile: Profile | None) -> bytes:
-    payload = {
-        "width_in": template.width_in,
-        "height_in": template.height_in,
-    }
-    elements = list(template.elements or [])
-    ink = profile_ink(profile)
-    if fmt == "PNG":
-        return render_png(payload, elements, record, dpi=dpi, seed=seed, **ink)
-    return render_pdf(payload, elements, record, dpi=dpi, seed=seed, **ink)
+def _page_png_key(batch_id: str, index: int) -> str:
+    return f"batches/{batch_id}/pages/{index:04d}.png"
+
+
+def _page_fail_key(batch_id: str, index: int) -> str:
+    return f"batches/{batch_id}/pages/{index:04d}.fail"
+
+
+def _page_state(batch_id: str, index: int) -> str | None:
+    storage = get_storage()
+    if storage.exists(_page_png_key(batch_id, index)):
+        return "png"
+    if storage.exists(_page_fail_key(batch_id, index)):
+        return "fail"
+    return None
+
+
+def _next_missing_page(batch: BatchJob) -> int | None:
+    """A valid row that was counted before its page was saved, or not saved yet."""
+    if not batch.combined:
+        return None
+    for index, record in enumerate(list(batch.records or []), start=1):
+        if not record.get("_valid", True):
+            continue
+        if _page_state(batch.id, index) is None:
+            return index
+    return None
+
+
+def _remember_failure(batch: BatchJob, index: int, message: str) -> None:
+    if not batch.combined:
+        return
+    get_storage().put(_page_fail_key(batch.id, index), message.encode("utf-8")[:500], "text/plain")
+
+
+def _skip_remaining(batch: BatchJob, after_index: int, message: str) -> None:
+    """Mark later rows so a stopped batch is not rendered further."""
+    for index, record in enumerate(list(batch.records or []), start=1):
+        if index <= after_index or not record.get("_valid", True):
+            continue
+        if _page_state(batch.id, index) is None:
+            _remember_failure(batch, index, message)
+            batch.failed += 1
+    batch.cursor = len(list(batch.records or []))
+
+
+def _open_page(template: Template, record: dict, *, dpi: int, seed: int, profile: Profile | None):
+    payload = {"width_in": template.width_in, "height_in": template.height_in}
+    return render_page(
+        payload,
+        list(template.elements or []),
+        record,
+        dpi=dpi,
+        seed=seed,
+        **profile_ink(profile),
+    )
+
+
+def _store_page(batch: BatchJob, template: Template, record: dict, index: int, *, dpi: int, profile: Profile | None) -> str:
+    """Render one record and store its files. Returns the display name."""
+    image = _open_page(template, record, dpi=dpi, seed=stable_seed(batch.id, index), profile=profile)
+    name = ""
+    try:
+        payload = {"width_in": template.width_in, "height_in": template.height_in}
+        if batch.individual:
+            ext, content_type = _content_type("PNG" if batch.export_format == "PNG" else "PDF")
+            name = _filename(batch, index, ext)
+            if ext == "png":
+                data = png_bytes(image)
+            else:
+                data = pdf_bytes(image, payload)
+            get_storage().put(f"batches/{batch.id}/{name}", data, content_type)
+            batch.bytes_written += len(data)
+        if batch.combined:
+            get_storage().put(_page_png_key(batch.id, index), png_bytes(image), "image/png")
+            if not name:
+                name = _filename(batch, index, "pdf")
+    finally:
+        image.close()
+    return name
+
+
+def _cleanup_pages(batch: BatchJob) -> None:
+    if batch.status not in {"Completed", "Failed"}:
+        return
+    try:
+        get_storage().delete_prefix(f"batches/{batch.id}/pages")
+    except Exception:
+        log.warning("Could not remove temporary pages for %s", batch.id, exc_info=True)
+
+
+def _publish_combined(batch: BatchJob, template: Template) -> str:
+    """Join saved pages into one PDF. Rows that failed are left out."""
+    storage = get_storage()
+    records = list(batch.records or [])
+    invalid = sum(1 for record in records if not record.get("_valid", True))
+    keys: list[str] = []
+    failures = 0
+    for index, record in enumerate(records, start=1):
+        if not record.get("_valid", True):
+            continue
+        state = _page_state(batch.id, index)
+        if state == "png":
+            keys.append(_page_png_key(batch.id, index))
+        else:
+            failures += 1
+    batch.generated = len(keys)
+    batch.failed = failures + invalid
+    if not keys:
+        batch.error = batch.error or "Every document failed."
+        return ""
+    payload = {"width_in": template.width_in, "height_in": template.height_in}
+    handle = tempfile.NamedTemporaryFile(prefix="handscript-", suffix=".pdf", delete=False)
+    handle.close()
+    path = Path(handle.name)
+    try:
+        written = write_pdf_from_pngs((storage.get(key) for key in keys), payload, path)
+        if written == 0:
+            batch.error = batch.error or "Every document failed."
+            return ""
+        artifact = storage.put_file(f"batches/{batch.id}/combined.pdf", path, "application/pdf")
+        batch.bytes_written += path.stat().st_size
+        return artifact
+    finally:
+        path.unlink(missing_ok=True)
 
 
 def finish_batch(db: Session, batch: BatchJob) -> None:
+    template = db.get(Template, batch.template_id)
+    storage = get_storage()
+    prefix = f"batches/{batch.id}"
+    artifact_key = ""
+    fmt = batch.export_format
+
+    if batch.combined and template is not None:
+        artifact_key = _publish_combined(batch, template)
+    elif batch.combined:
+        batch.error = "Template no longer exists."
+        batch.generated = 0
+
     if batch.generated == 0 and batch.failed:
         batch.status = "Failed"
         export_status = "Failed"
@@ -111,34 +243,21 @@ def finish_batch(db: Session, batch: BatchJob) -> None:
         export_status = "Completed"
     batch.current_item = ""
 
-    template = db.get(Template, batch.template_id)
-    storage = get_storage()
-    prefix = f"batches/{batch.id}"
-    artifact_key = ""
-    fmt = batch.export_format
-
-    if batch.combined and template is not None:
-        valid = [r for r in (batch.records or []) if r.get("_valid", True)]
-        profile = db.get(Profile, batch.profile_id)
-        dpi = parse_dpi(settings_dict(db).get("resolution"))
-        data = render_combined_pdf(
-            {"width_in": template.width_in, "height_in": template.height_in},
-            list(template.elements or []),
-            valid,
-            dpi=dpi,
-            seeds=[stable_seed(batch.id, index + 1) for index in range(len(valid))],
-            **profile_ink(profile),
-        )
-        artifact_key = storage.put(f"{prefix}/combined.pdf", data, "application/pdf")
-        batch.bytes_written += len(data)
-
-    files = storage.list_prefix(prefix)
+    files = [
+        item for item in storage.list_prefix(prefix)
+        if "/pages/" not in item[0] and not item[0].endswith("/combined.pdf")
+    ]
     if batch.individual and len(files) > 1 and not artifact_key:
-        blob = io.BytesIO()
-        with zipfile.ZipFile(blob, "w", zipfile.ZIP_DEFLATED) as archive:
-            for key, _size in files:
-                archive.writestr(key.rsplit("/", 1)[-1], storage.get(key))
-        artifact_key = storage.put(f"{prefix}/bundle.zip", blob.getvalue(), "application/zip")
+        handle = tempfile.NamedTemporaryFile(prefix="handscript-", suffix=".zip", delete=False)
+        handle.close()
+        zip_path = Path(handle.name)
+        try:
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+                for key, _size in files:
+                    archive.writestr(key.rsplit("/", 1)[-1], storage.get(key))
+            artifact_key = storage.put_file(f"{prefix}/bundle.zip", zip_path, "application/zip")
+        finally:
+            zip_path.unlink(missing_ok=True)
     elif files and not artifact_key:
         artifact_key = files[0][0]
 
@@ -163,6 +282,54 @@ def finish_batch(db: Session, batch: BatchJob) -> None:
     log_activity(db, "batch" if batch.status == "Completed" else "error", batch.name, detail)
 
 
+def _close_if_finished(db: Session, batch: BatchJob) -> bool:
+    """Publish the batch once every row has been saved or marked failed."""
+    if batch.cursor < len(list(batch.records or [])):
+        return False
+    if _next_missing_page(batch) is not None:
+        return False
+    batch.current_item = "Preparing the download"
+    db.commit()
+    finish_batch(db, batch)
+    return True
+
+
+def _capture(db: Session, batch: BatchJob, index: int, *, count: bool) -> None:
+    """Render record `index` (1-based). Failures are recorded and the batch continues."""
+    records = list(batch.records or [])
+    record = records[index - 1]
+    template = db.get(Template, batch.template_id)
+    if template is None:
+        batch.status = "Failed"
+        batch.error = "Template no longer exists."
+        if count:
+            batch.failed += 1
+            batch.cursor = max(batch.cursor, index)
+        return
+    profile = db.get(Profile, batch.profile_id)
+    dpi = parse_dpi(settings_dict(db).get("resolution"))
+    batch.current_item = f"Saving page {index} of {batch.total}"
+    db.commit()
+    try:
+        name = _store_page(batch, template, record, index, dpi=dpi, profile=profile)
+    except Exception as exc:
+        message = str(exc).strip() or "This page could not be rendered."
+        log.warning("Batch %s skipped row %s: %s", batch.id, index, message)
+        batch.error = message[:500]
+        batch.current_item = f"Failed on row {index}"
+        _remember_failure(batch, index, batch.error)
+        if count:
+            batch.failed += 1
+            batch.cursor = max(batch.cursor, index)
+        if count and settings_dict(db).get("pause_on_error"):
+            _skip_remaining(batch, index, "Skipped because an earlier page failed.")
+        return
+    if count:
+        batch.generated += 1
+        batch.cursor = max(batch.cursor, index)
+    batch.current_item = name or _filename(batch, index, "pdf")
+
+
 def process_one_tick(db: Session) -> str | None:
     """Advance one runnable batch by a single record. Returns the batch id."""
     _complete_analyses(db)
@@ -176,62 +343,55 @@ def process_one_tick(db: Session) -> str | None:
         return None
     if batch.status == "Queued":
         batch.status = "Running"
+        db.commit()
 
     records = list(batch.records or [])
     if batch.cursor >= len(records):
-        finish_batch(db, batch)
-        db.commit()
+        missing = _next_missing_page(batch)
+        if missing is None:
+            _close_if_finished(db, batch)
+            db.commit()
+            _cleanup_pages(batch)
+        else:
+            _capture(db, batch, missing, count=False)
+            if batch.status != "Failed" and _close_if_finished(db, batch):
+                db.commit()
+                _cleanup_pages(batch)
+            else:
+                db.commit()
         return batch.id
 
+    index = batch.cursor + 1
     record = records[batch.cursor]
-    batch.cursor += 1
-    index = batch.cursor
     if not record.get("_valid", True):
+        batch.cursor = index
         batch.failed += 1
         batch.current_item = f"Skipped invalid row {index}"
-        if batch.cursor >= len(records):
-            finish_batch(db, batch)
-        db.commit()
+        if _close_if_finished(db, batch):
+            db.commit()
+            _cleanup_pages(batch)
+        else:
+            db.commit()
         return batch.id
 
-    template = db.get(Template, batch.template_id)
-    if template is None:
-        batch.status = "Failed"
-        batch.error = "Template no longer exists."
-        batch.failed += 1
-        db.commit()
-        return batch.id
-
-    fmt = "PNG" if batch.export_format == "PNG" else "PDF"
-    profile = db.get(Profile, batch.profile_id)
-    dpi = parse_dpi(settings_dict(db).get("resolution"))
-    try:
-        data = _render_one(fmt, template, record, dpi=dpi, seed=stable_seed(batch.id, index), profile=profile)
-    except Exception as exc:  # rendering failure should not kill the worker
-        batch.failed += 1
-        batch.error = str(exc)
-        batch.current_item = f"Failed on row {index}"
-        prefs = settings_dict(db)
-        if prefs.get("pause_on_error"):
-            batch.status = "Failed"
-        elif batch.cursor >= len(records):
-            finish_batch(db, batch)
-        db.commit()
-        return batch.id
-
-    if batch.individual:
-        ext, content_type = _content_type(fmt)
-        name = _filename(batch, index, ext)
-        key = f"batches/{batch.id}/{name}"
-        get_storage().put(key, data, content_type)
-        batch.bytes_written += len(data)
-        batch.current_item = name
-    else:
+    if batch.combined and _page_state(batch.id, index) == "png":
+        batch.cursor = index
+        batch.generated += 1
         batch.current_item = _filename(batch, index, "pdf")
-    batch.generated += 1
-    if batch.cursor >= len(records):
-        finish_batch(db, batch)
-    db.commit()
+    elif batch.combined and _page_state(batch.id, index) == "fail":
+        batch.cursor = index
+        batch.failed += 1
+        batch.current_item = f"Failed on row {index}"
+    else:
+        _capture(db, batch, index, count=True)
+        if batch.status == "Failed":
+            db.commit()
+            return batch.id
+    if _close_if_finished(db, batch):
+        db.commit()
+        _cleanup_pages(batch)
+    else:
+        db.commit()
     return batch.id
 
 

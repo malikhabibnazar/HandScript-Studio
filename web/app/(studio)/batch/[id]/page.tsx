@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Badge, useToast } from "@/components/ui";
-import { API_URL, api, downloadExport, previewExport, printExport } from "@/lib/api";
+import { api, downloadExport, previewExport, printExport } from "@/lib/api";
 import type { Batch, ExportRecord } from "@/lib/types";
 
 export default function BatchProgressPage() {
@@ -15,19 +15,32 @@ export default function BatchProgressPage() {
   const [printing, setPrinting] = useState(false);
 
   useEffect(() => {
-    api.batch(params.id).then(setBatch).catch((err: Error) => toast(err.message, "danger"));
-    const source = new EventSource(`${API_URL}/api/batches/${params.id}/events`);
-    source.onmessage = (event) => setBatch(JSON.parse(event.data));
-    source.onerror = () => source.close();
-    return () => source.close();
+    let stopped = false;
+    let timer = 0;
+    let seen = false;
+    const finished = (status: string) => ["Completed", "Failed", "Cancelled"].includes(status);
+    const pull = async () => {
+      try {
+        const next = await api.batch(params.id);
+        if (stopped) return;
+        seen = true;
+        setBatch(next);
+        if (finished(next.status)) {
+          const rows = await api.exports();
+          if (!stopped) setExportRow(rows.find((row) => row.batch_id === next.id) || null);
+          return;
+        }
+      } catch (err) {
+        if (!stopped && !seen) toast(err instanceof Error ? err.message : "Could not load the batch", "danger");
+      }
+      if (!stopped) timer = window.setTimeout(pull, 1000);
+    };
+    void pull();
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+    };
   }, [params.id, toast]);
-
-  useEffect(() => {
-    if (!batch || !["Completed", "Failed"].includes(batch.status)) return;
-    api.exports().then((rows) => {
-      setExportRow(rows.find((row) => row.batch_id === batch.id) || null);
-    }).catch(() => undefined);
-  }, [batch?.status, batch?.id]);
 
   if (!batch) return <div className="loading">Loading batch…</div>;
   const percent = Math.round((batch.progress || 0) * 100);

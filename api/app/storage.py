@@ -1,6 +1,7 @@
 """Object storage. Local disk by default; S3-compatible when configured."""
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 from app.config import get_settings
@@ -44,6 +45,42 @@ class Storage:
         path = self.root / key
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(data)
+        return key
+
+    def exists(self, key: str) -> bool:
+        key = key.lstrip("/")
+        if self._client is not None:
+            try:
+                self._client.head_object(Bucket=self.settings.s3_bucket, Key=key)
+            except Exception as exc:
+                response = getattr(exc, "response", None)
+                code = ""
+                status = None
+                if isinstance(response, dict):
+                    code = str(response.get("Error", {}).get("Code", ""))
+                    status = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+                if status == 404 or code in {"404", "NoSuchKey", "NotFound"}:
+                    return False
+                message = str(exc)
+                if "404" in message or "Not Found" in message or "NoSuchKey" in message:
+                    return False
+                raise
+            return True
+        return (self.root / key).is_file()
+
+    def put_file(self, key: str, path: Path, content_type: str) -> str:
+        key = key.lstrip("/")
+        if self._client is not None:
+            self._client.upload_file(
+                str(path),
+                self.settings.s3_bucket,
+                key,
+                ExtraArgs={"ContentType": content_type},
+            )
+            return key
+        dest = self.root / key
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, dest)
         return key
 
     def get(self, key: str) -> bytes:

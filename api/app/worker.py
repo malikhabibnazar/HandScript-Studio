@@ -1,6 +1,7 @@
 """External worker. Polls PostgreSQL and, when configured, waits on Redis."""
 from __future__ import annotations
 
+import gc
 import logging
 import time
 
@@ -25,17 +26,21 @@ def _wait() -> None:
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     init_db()
     while True:
         db = SessionLocal()
+        advanced = None
         try:
-            process_one_tick(db)
+            advanced = process_one_tick(db)
         except Exception:
             logging.exception("batch worker tick failed")
             db.rollback()
         finally:
             db.close()
-        _wait()
+            gc.collect()
+        if not advanced:
+            _wait()
 
 
 if __name__ == "__main__":
