@@ -177,13 +177,13 @@ class ProfileCreate(BaseModel):
     name: str
     description: str = ""
     preview_text: str = "The quick brown fox"
-    engine: str = "handwrite"
+    engine: str = "handfonted"
     font_family: str = "caveat"
 
     @field_validator("engine")
     @classmethod
     def _engine(cls, value: str) -> str:
-        engine = (value or "handwrite").strip().lower()
+        engine = (value or "handfonted").strip().lower()
         if engine not in PROFILE_ENGINES:
             raise ValueError(_ENGINE_ERROR)
         return engine

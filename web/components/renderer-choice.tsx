@@ -112,7 +112,7 @@ export function RendererPicker({
         <p className="secondary">
           {status?.handfonted?.ready
             ? "The HandFonted service is running. After you create the profile, the next page is the letter review: upload a photo, correct each character, generate the font, then try a sentence."
-            : "Start the HandFonted container with docker compose up -d handfonted. The usual sample list is not used for this option."}
+            : "HandFonted is required and is still loading its models. Wait for that service, then create the profile."}
         </p>
       ) : null}
       {engine === "handwrite" ? (

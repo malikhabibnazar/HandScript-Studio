@@ -26,7 +26,7 @@ import cv2
 import numpy as np
 import torch
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 from PIL import Image
 from pydantic import BaseModel, Field
 from torchvision import transforms
@@ -98,8 +98,11 @@ class FontRequest(BaseModel):
 
 
 @app.get("/health")
-def health() -> dict:
-    return {"ready": _ready, "message": _message, "classes": "".join(CLASSES)}
+def health():
+    body = {"ready": _ready, "message": _message, "classes": "".join(CLASSES)}
+    if not _ready:
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 @app.post("/v1/process")

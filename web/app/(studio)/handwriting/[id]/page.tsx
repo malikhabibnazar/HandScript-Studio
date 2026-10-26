@@ -5,10 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import { BackLink, Badge, useConfirm, useToast } from "@/components/ui";
 import { api } from "@/lib/api";
 import { formatDate } from "@/lib/format";
-import { RendererPicker } from "@/components/renderer-choice";
 import { DrawStudio } from "@/components/draw/studio";
 import { HandfontedStudio } from "@/components/handfonted-studio";
-import type { DrawfontCapture, HandwritingStatus, PillowFace, Profile, ProfileStyle } from "@/lib/types";
+import type { DrawfontCapture, HandwritingStatus, Profile, ProfileStyle } from "@/lib/types";
 
 const DEFAULT_STYLE: ProfileStyle = {
   style_id: 9,
@@ -121,16 +120,6 @@ export default function HandwritingDetailPage() {
               <input value={text} onChange={(event) => setText(event.target.value)} onBlur={() => api.updateProfile(profile.id, { preview_text: text })} />
             </div>
             <div className="stack" style={{ marginTop: 12 }}>
-              <div className="field">
-                <label>Renderer</label>
-                <RendererPicker
-                  engine={style.engine}
-                  face={style.font_family}
-                  status={engine}
-                  onEngine={(next) => saveStyle({ ...style, engine: next })}
-                  onFace={(next: PillowFace) => saveStyle({ ...style, font_family: next })}
-                />
-              </div>
               {style.engine === "graves" ? (
                 <>
                   <p className="sub">Graves style primer. This selects a built-in hand. It does not clone an uploaded sample.</p>

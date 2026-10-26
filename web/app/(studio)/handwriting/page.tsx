@@ -77,8 +77,8 @@ export default function HandwritingPage() {
               <input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} />
             </div>
             <div className="field">
-              <label>Renderer</label>
-              <div className="option on" aria-disabled="true" style={{ cursor: "default" }}>
+              <label id="profile-engine-label">Renderer</label>
+              <div className="option on" role="radio" aria-labelledby="profile-engine-label" aria-checked="true" aria-disabled="true" style={{ cursor: "default", pointerEvents: "none" }}>
                 <span className="radio" />
                 <strong>HandFonted</strong>
               </div>
